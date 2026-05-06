@@ -1,0 +1,16 @@
+{
+  "name": "enhanced-video-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter demo dev",
+    "build": "pnpm --filter demo build",
+    "preview": "pnpm --filter demo preview",
+    "check": "pnpm -r check"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
