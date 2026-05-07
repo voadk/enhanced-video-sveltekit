@@ -5,7 +5,12 @@
 
 	type Props = Omit<HTMLVideoAttributes, 'src' | 'poster'> & {
 		metadata: EnhancedVideoMetadata;
+		/** When the sources are loaded. `'lazy'` (default) gates download by IntersectionObserver. `'eager'` loads immediately. */
 		loading?: 'lazy' | 'eager';
+		/** Auto-pause when scrolled out of viewport, resume when scrolled back. Default true. Pass `false` to disable. */
+		autoPause?: boolean;
+		/** Honor `prefers-reduced-motion` by suppressing autoplay. Default true. Pass `false` to override. */
+		respectReducedMotion?: boolean;
 	};
 
 	let {
@@ -14,6 +19,9 @@
 		style = '',
 		preload = 'metadata',
 		loading = 'lazy',
+		autoPause = true,
+		respectReducedMotion = true,
+		autoplay,
 		...rest
 	}: Props = $props();
 
@@ -55,9 +63,20 @@
 	}
 
 	onMount(() => {
-		let observer: IntersectionObserver | undefined;
+		let lazyObserver: IntersectionObserver | undefined;
+		let visibilityObserver: IntersectionObserver | undefined;
 		let trackerCleanup: (() => void) | undefined;
+		let reducedMotionMq: MediaQueryList | undefined;
 		let activated = false;
+		let pausedByVisibility = false;
+
+		const reducedMotionWanted =
+			respectReducedMotion &&
+			typeof window !== 'undefined' &&
+			window.matchMedia &&
+			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const shouldAutoplay = autoplay !== undefined && autoplay !== false && !reducedMotionWanted;
 
 		function activate() {
 			if (activated) return;
@@ -67,13 +86,17 @@
 				const el = videoEl;
 				if (!el) return;
 				el.load();
-				el.play().catch(() => {});
-				trackerCleanup = trackPlayback(el);
+				if (shouldAutoplay) {
+					el.play().catch(() => {});
+					trackerCleanup = trackPlayback(el);
+				} else {
+					reveal();
+				}
 			});
 		}
 
 		if (loading === 'lazy' && typeof IntersectionObserver !== 'undefined' && wrapperEl) {
-			observer = new IntersectionObserver(
+			lazyObserver = new IntersectionObserver(
 				(entries) => {
 					for (const entry of entries) {
 						if (entry.isIntersecting) {
@@ -84,13 +107,50 @@
 				},
 				{ rootMargin: '200px' }
 			);
-			observer.observe(wrapperEl);
+			lazyObserver.observe(wrapperEl);
 		} else {
 			activate();
 		}
 
+		if (autoPause && typeof IntersectionObserver !== 'undefined' && wrapperEl) {
+			visibilityObserver = new IntersectionObserver(
+				(entries) => {
+					const el = videoEl;
+					if (!el) return;
+					for (const entry of entries) {
+						if (entry.isIntersecting) {
+							if (pausedByVisibility) {
+								el.play().catch(() => {});
+								pausedByVisibility = false;
+							}
+						} else if (!el.paused) {
+							el.pause();
+							pausedByVisibility = true;
+						}
+					}
+				},
+				{ threshold: 0 }
+			);
+			visibilityObserver.observe(wrapperEl);
+		}
+
+		if (
+			respectReducedMotion &&
+			typeof window !== 'undefined' &&
+			window.matchMedia
+		) {
+			reducedMotionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+			const onChange = (e: MediaQueryListEvent) => {
+				const el = videoEl;
+				if (!el) return;
+				if (e.matches && !el.paused) el.pause();
+			};
+			reducedMotionMq.addEventListener('change', onChange);
+		}
+
 		return () => {
-			observer?.disconnect();
+			lazyObserver?.disconnect();
+			visibilityObserver?.disconnect();
 			trackerCleanup?.();
 		};
 	});
@@ -106,6 +166,7 @@
 		width={metadata.width}
 		height={metadata.height}
 		{preload}
+		{autoplay}
 		{...rest}
 	>
 		{#if loaded}
