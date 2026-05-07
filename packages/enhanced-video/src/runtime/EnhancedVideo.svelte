@@ -5,12 +5,14 @@
 
 	type Props = Omit<HTMLVideoAttributes, 'src' | 'poster'> & {
 		metadata: EnhancedVideoMetadata;
-		/** When the sources are loaded. `'lazy'` (default) gates download by IntersectionObserver. `'eager'` loads immediately. */
-		loading?: 'lazy' | 'eager';
-		/** Auto-pause when scrolled out of viewport, resume when scrolled back. Default true. Pass `false` to disable. */
+		/** When sources load. `'lazy'` (default): IntersectionObserver-gated. `'eager'`: load immediately. `'click'`: poster + play button until user clicks. */
+		loading?: 'lazy' | 'eager' | 'click';
+		/** Auto-pause when scrolled out of viewport, resume when scrolled back. Default true. */
 		autoPause?: boolean;
-		/** Honor `prefers-reduced-motion` by suppressing autoplay. Default true. Pass `false` to override. */
+		/** Honor `prefers-reduced-motion` by suppressing autoplay. Default true. */
 		respectReducedMotion?: boolean;
+		/** ARIA label for the click-to-play button. Default 'Play video'. */
+		playLabel?: string;
 	};
 
 	let {
@@ -21,6 +23,7 @@
 		loading = 'lazy',
 		autoPause = true,
 		respectReducedMotion = true,
+		playLabel = 'Play video',
 		autoplay,
 		...rest
 	}: Props = $props();
@@ -29,6 +32,11 @@
 	let videoEl = $state<HTMLVideoElement | undefined>(undefined);
 	let posterHidden = $state(false);
 	let loaded = $state(false);
+	let activated = $state(false);
+	let clickedToPlay = $state(false);
+
+	let trackerCleanup: (() => void) | undefined;
+	let reducedMotionWanted = false;
 
 	function reveal() {
 		posterHidden = true;
@@ -62,40 +70,44 @@
 		return finish;
 	}
 
+	function activate(forcePlay = false): void {
+		if (activated) return;
+		activated = true;
+		loaded = true;
+		const wantsPlay = forcePlay || (autoplay !== undefined && autoplay !== false && !reducedMotionWanted);
+		void tick().then(() => {
+			const el = videoEl;
+			if (!el) return;
+			el.load();
+			if (wantsPlay) {
+				el.play().catch(() => {});
+				trackerCleanup = trackPlayback(el);
+			} else {
+				reveal();
+			}
+		});
+	}
+
+	function onPlayClick(): void {
+		clickedToPlay = true;
+		activate(true);
+	}
+
 	onMount(() => {
 		let lazyObserver: IntersectionObserver | undefined;
 		let visibilityObserver: IntersectionObserver | undefined;
-		let trackerCleanup: (() => void) | undefined;
 		let reducedMotionMq: MediaQueryList | undefined;
-		let activated = false;
 		let pausedByVisibility = false;
 
-		const reducedMotionWanted =
+		reducedMotionWanted =
 			respectReducedMotion &&
 			typeof window !== 'undefined' &&
 			window.matchMedia &&
 			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-		const shouldAutoplay = autoplay !== undefined && autoplay !== false && !reducedMotionWanted;
-
-		function activate() {
-			if (activated) return;
-			activated = true;
-			loaded = true;
-			void tick().then(() => {
-				const el = videoEl;
-				if (!el) return;
-				el.load();
-				if (shouldAutoplay) {
-					el.play().catch(() => {});
-					trackerCleanup = trackPlayback(el);
-				} else {
-					reveal();
-				}
-			});
-		}
-
-		if (loading === 'lazy' && typeof IntersectionObserver !== 'undefined' && wrapperEl) {
+		if (loading === 'click') {
+			// Wait for the user to click. Don't observe; don't activate.
+		} else if (loading === 'lazy' && typeof IntersectionObserver !== 'undefined' && wrapperEl) {
 			lazyObserver = new IntersectionObserver(
 				(entries) => {
 					for (const entry of entries) {
@@ -188,6 +200,18 @@
 			height={metadata.height}
 		/>
 	{/if}
+	{#if loading === 'click' && !clickedToPlay}
+		<button
+			type="button"
+			class="enhanced-video-play"
+			aria-label={playLabel}
+			onclick={onPlayClick}
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+				<path d="M8 5v14l11-7z" fill="currentColor" />
+			</svg>
+		</button>
+	{/if}
 </div>
 
 <style>
@@ -211,5 +235,26 @@
 	}
 	.enhanced-video-poster-hidden {
 		opacity: 0;
+	}
+	.enhanced-video-play {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		background: rgba(0, 0, 0, 0.15);
+		border: none;
+		cursor: pointer;
+		transition: background 150ms ease-out;
+		color: white;
+	}
+	.enhanced-video-play:hover,
+	.enhanced-video-play:focus-visible {
+		background: rgba(0, 0, 0, 0.3);
+		outline: none;
+	}
+	.enhanced-video-play svg {
+		width: clamp(48px, 12%, 96px);
+		height: clamp(48px, 12%, 96px);
+		filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
 	}
 </style>

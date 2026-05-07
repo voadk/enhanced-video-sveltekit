@@ -1,6 +1,6 @@
 {
   "name": "enhanced-video-sveltekit",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Build-time video optimization for SvelteKit. AV1 + H.264 output, auto-extracted poster, lazy loading, on-disk cache.",
   "license": "MIT",
   "author": "Victor Østergaard Nielsen <victor@voe.dk>",
