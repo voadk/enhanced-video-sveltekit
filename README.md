@@ -37,6 +37,35 @@ pnpm --filter enhanced-video-sveltekit dev    # tsc --watch
 
 The demo picks up the rebuilt `dist/` automatically; refresh the browser.
 
+## Commit messages
+
+Conventional Commits are enforced via a husky `commit-msg` hook + commitlint (`@commitlint/config-conventional`). The hook is wired up automatically by the `prepare` script when you run `pnpm install`.
+
+```
+type(scope?): subject
+
+feat:      new feature
+fix:       bug fix
+perf:      performance improvement
+refactor:  internal restructure
+docs:      documentation
+test:      tests
+build:     build system / deps
+ci:        CI workflow
+chore:     anything else
+revert:    revert a previous commit
+```
+
+Bad commits are rejected by the hook before they land. The `cliff.toml` config groups these into the auto-generated `CHANGELOG.md` on release.
+
+To preview the upcoming `[Unreleased]` section locally without releasing:
+
+```bash
+pnpm view:cliff
+```
+
+(Needs `git-cliff` on your `PATH` — `brew install git-cliff` once.)
+
 ## Publish to npm
 
 There's a GitHub Actions workflow at [`.github/workflows/publish.yml`](.github/workflows/publish.yml) that publishes automatically.
