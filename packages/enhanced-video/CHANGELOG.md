@@ -5,6 +5,23 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.1.0] - 2026-05-07
+
+### CI
+
+- Use --notes-file for GitHub release body, avoid shell interpolation (f4b75fc)
+- Enforce Conventional Commits via husky + commitlint commit-msg hook (4d6bc12)
+- Auto-generate CHANGELOG from commit history with git-cliff (f25b3b2)
+
+### Documentation
+
+- Add AGENTS.md with project context for AI agents (4e84423)
+- Explain Conventional Commits requirement and view:cliff (e12a036)
+
+### Features
+
+- Add plugin options API and multi-resolution output (9a9b559)
+
 ## [0.0.1] - 2026-05-07
 
 ### CI
