@@ -1,4 +1,4 @@
-export type VideoFormat = 'mp4' | 'webm';
+export type VideoFormat = 'mp4' | 'webm' | 'mp4_hevc' | 'av1';
 
 export interface EnhancedVideosOptions {
 	/** Output formats. Default: ['mp4', 'webm'] */

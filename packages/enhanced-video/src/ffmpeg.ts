@@ -147,6 +147,40 @@ export function encodeAv1Webm({
 	return run_ffmpeg(args, onProgress);
 }
 
+export function encodeVp9Webm({
+	src,
+	out,
+	has_audio,
+	height,
+	fps,
+	onProgress
+}: EncodeOpts): Promise<void> {
+	const args = ['-i', src];
+	const vf = build_vf(height);
+	if (vf) args.push('-vf', vf);
+	if (fps) args.push('-r', String(fps));
+	args.push(
+		'-c:v',
+		'libvpx-vp9',
+		'-crf',
+		'32',
+		'-b:v',
+		'0',
+		'-pix_fmt',
+		'yuv420p',
+		'-row-mt',
+		'1',
+		'-deadline',
+		'good',
+		'-cpu-used',
+		'2'
+	);
+	if (has_audio) args.push('-c:a', 'libopus', '-b:a', '96k');
+	else args.push('-an');
+	args.push('-f', 'webm', out);
+	return run_ffmpeg(args, onProgress);
+}
+
 export function encodeH264Mp4({
 	src,
 	out,
@@ -170,6 +204,40 @@ export function encodeH264Mp4({
 		'yuv420p',
 		'-movflags',
 		'+faststart'
+	);
+	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
+	else args.push('-an');
+	args.push('-f', 'mp4', out);
+	return run_ffmpeg(args, onProgress);
+}
+
+export function encodeH265Mp4({
+	src,
+	out,
+	has_audio,
+	height,
+	fps,
+	onProgress
+}: EncodeOpts): Promise<void> {
+	const args = ['-i', src];
+	const vf = build_vf(height);
+	if (vf) args.push('-vf', vf);
+	if (fps) args.push('-r', String(fps));
+	args.push(
+		'-c:v',
+		'libx265',
+		'-crf',
+		'28',
+		'-preset',
+		'medium',
+		'-pix_fmt',
+		'yuv420p',
+		'-tag:v',
+		'hvc1',
+		'-movflags',
+		'+faststart',
+		'-x265-params',
+		'log-level=error'
 	);
 	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
 	else args.push('-an');

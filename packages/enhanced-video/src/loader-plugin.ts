@@ -6,7 +6,9 @@ import {
 	configureConcurrency,
 	encodeAv1Webm,
 	encodeH264Mp4,
+	encodeH265Mp4,
 	encodePoster,
+	encodeVp9Webm,
 	probe
 } from './ffmpeg.js';
 import { getCacheDir, getCacheKey, readMeta, writeMeta } from './cache.js';
@@ -28,17 +30,23 @@ const DEFAULT_RESOLUTIONS = [1080, 720, 480];
 
 const FORMAT_EXT: Record<VideoFormat, string> = {
 	mp4: 'mp4',
-	webm: 'webm'
+	webm: 'webm',
+	mp4_hevc: 'mp4',
+	av1: 'webm'
 };
 
 const FORMAT_CONTENT_TYPE: Record<VideoFormat, string> = {
 	mp4: 'video/mp4',
-	webm: 'video/webm'
+	webm: 'video/webm',
+	mp4_hevc: 'video/mp4',
+	av1: 'video/webm'
 };
 
 const FORMAT_SOURCE_TYPE: Record<VideoFormat, string> = {
 	mp4: 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
-	webm: 'video/webm; codecs="av01.0.04M.08"'
+	webm: 'video/webm; codecs="vp09.00.10.08"',
+	mp4_hevc: 'video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"',
+	av1: 'video/webm; codecs="av01.0.04M.08"'
 };
 
 const POSTER_CONTENT_TYPE = 'image/jpeg';
@@ -102,7 +110,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, resolutions, fps: fps_cap, version: 2 };
+			const args = { formats, resolutions, fps: fps_cap, version: 3 };
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
@@ -175,7 +183,9 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 							};
 
 							if (fmt === 'mp4') tasks.push(encodeH264Mp4(opts));
-							else if (fmt === 'webm') tasks.push(encodeAv1Webm(opts));
+							else if (fmt === 'webm') tasks.push(encodeVp9Webm(opts));
+							else if (fmt === 'mp4_hevc') tasks.push(encodeH265Mp4(opts));
+							else if (fmt === 'av1') tasks.push(encodeAv1Webm(opts));
 
 							artifact_specs.push({
 								format: fmt,
