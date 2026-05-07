@@ -17,7 +17,11 @@ export interface EnhancedVideosOptions {
 	ffmpegPath?: string;
 	/** Explicit path to the ffprobe binary. Overrides static-binary autodetection and PATH. */
 	ffprobePath?: string;
+	/** Hardware encoder selection for H.264/HEVC. `'auto'` picks the best available; explicit values force a specific accelerator (errors if missing). `false` (default) keeps software-only encoding for output reproducibility. VP9/AV1 always use software regardless. */
+	hwAccel?: HwAccel;
 }
+
+export type HwAccel = 'auto' | 'videotoolbox' | 'nvenc' | 'vaapi' | 'qsv' | false;
 
 export interface EnhancedVideoSource {
 	src: string;
@@ -72,5 +76,6 @@ export interface EncodeArgs {
 	formats: VideoFormat[];
 	resolutions: number[];
 	fps: number | null;
+	hwAccel: HwAccel | null;
 	version: number;
 }

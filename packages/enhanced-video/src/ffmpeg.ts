@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import pLimit, { type LimitFunction } from 'p-limit';
+import type { HwAccel } from './types.js';
 
 let limiter: LimitFunction = pLimit(Math.max(1, os.cpus().length - 1));
 
@@ -60,6 +61,76 @@ export function configureBinaries(opts: { ffmpegPath?: string; ffprobePath?: str
 
 	if (opts.ffmpegPath) ffmpeg_bin = opts.ffmpegPath;
 	if (opts.ffprobePath) ffprobe_bin = opts.ffprobePath;
+}
+
+interface EncoderEntry {
+	name: string;
+	accel: HwAccel | 'sw';
+}
+
+interface EncoderCatalog {
+	h264: EncoderEntry[];
+	hevc: EncoderEntry[];
+}
+
+const HWACCEL_PRIORITY: ReadonlyArray<HwAccel | 'sw'> = [
+	'nvenc',
+	'videotoolbox',
+	'vaapi',
+	'qsv',
+	'sw'
+];
+
+let encoder_catalog: EncoderCatalog | null = null;
+
+function detect_encoders(): EncoderCatalog {
+	const result = spawnSync(ffmpeg_bin, ['-encoders'], { encoding: 'utf-8' });
+	const text = result.status === 0 ? (result.stdout ?? '') : '';
+	const has = (name: string) => new RegExp(`\\b${name}\\b`).test(text);
+	const candidates: Array<{ name: string; accel: HwAccel | 'sw' }> = [
+		{ name: 'h264_nvenc', accel: 'nvenc' },
+		{ name: 'h264_videotoolbox', accel: 'videotoolbox' },
+		{ name: 'h264_vaapi', accel: 'vaapi' },
+		{ name: 'h264_qsv', accel: 'qsv' },
+		{ name: 'libx264', accel: 'sw' },
+		{ name: 'hevc_nvenc', accel: 'nvenc' },
+		{ name: 'hevc_videotoolbox', accel: 'videotoolbox' },
+		{ name: 'hevc_vaapi', accel: 'vaapi' },
+		{ name: 'hevc_qsv', accel: 'qsv' },
+		{ name: 'libx265', accel: 'sw' }
+	];
+	const order = (e: EncoderEntry) => HWACCEL_PRIORITY.indexOf(e.accel);
+	const all = candidates.filter((c) => has(c.name));
+	return {
+		h264: all
+			.filter((c) => c.name.startsWith('h264_') || c.name === 'libx264')
+			.sort((a, b) => order(a) - order(b)),
+		hevc: all
+			.filter((c) => c.name.startsWith('hevc_') || c.name === 'libx265')
+			.sort((a, b) => order(a) - order(b))
+	};
+}
+
+function pick_encoder(codec: 'h264' | 'hevc', hwAccel: HwAccel): EncoderEntry {
+	if (!encoder_catalog) encoder_catalog = detect_encoders();
+	const list = encoder_catalog[codec];
+	if (list.length === 0) {
+		throw new Error(`enhanced-video: no ${codec} encoder available in this ffmpeg build`);
+	}
+	if (hwAccel === false) {
+		const sw = list.find((e) => e.accel === 'sw');
+		if (!sw) throw new Error(`enhanced-video: software ${codec} encoder (libx264/libx265) not available`);
+		return sw;
+	}
+	if (hwAccel === 'auto') return list[0];
+	const match = list.find((e) => e.accel === hwAccel);
+	if (!match) {
+		const tried = list.map((e) => e.name).join(', ');
+		throw new Error(
+			`enhanced-video: requested hwAccel='${hwAccel}' but no matching encoder available. Found: ${tried}.`
+		);
+	}
+	return match;
 }
 
 let ffmpeg_banner_cache: string | null = null;
@@ -168,7 +239,49 @@ interface EncodeOpts {
 	height?: number;
 	/** FPS cap. */
 	fps?: number;
+	/** Hardware accelerator. Default `false` (software). Only honored by H.264 + HEVC encoders. */
+	hwAccel?: HwAccel;
 	onProgress?: (outTimeUs: number) => void;
+}
+
+function push_h264_quality(args: string[], encoder: EncoderEntry): void {
+	switch (encoder.accel) {
+		case 'sw':
+			args.push('-crf', '23', '-preset', 'medium', '-pix_fmt', 'yuv420p');
+			break;
+		case 'videotoolbox':
+			args.push('-q:v', '55', '-pix_fmt', 'yuv420p');
+			break;
+		case 'nvenc':
+			args.push('-rc', 'vbr', '-cq', '23', '-preset', 'p4', '-pix_fmt', 'yuv420p');
+			break;
+		case 'qsv':
+			args.push('-global_quality', '23', '-preset', 'medium', '-pix_fmt', 'nv12');
+			break;
+		case 'vaapi':
+			args.push('-qp', '23');
+			break;
+	}
+}
+
+function push_hevc_quality(args: string[], encoder: EncoderEntry): void {
+	switch (encoder.accel) {
+		case 'sw':
+			args.push('-crf', '28', '-preset', 'medium', '-pix_fmt', 'yuv420p');
+			break;
+		case 'videotoolbox':
+			args.push('-q:v', '60', '-pix_fmt', 'yuv420p');
+			break;
+		case 'nvenc':
+			args.push('-rc', 'vbr', '-cq', '28', '-preset', 'p4', '-pix_fmt', 'yuv420p');
+			break;
+		case 'qsv':
+			args.push('-global_quality', '28', '-preset', 'medium', '-pix_fmt', 'nv12');
+			break;
+		case 'vaapi':
+			args.push('-qp', '28');
+			break;
+	}
 }
 
 function build_vf(height: number | undefined): string | null {
@@ -246,24 +359,17 @@ export function encodeH264Mp4({
 	has_audio,
 	height,
 	fps,
+	hwAccel = false,
 	onProgress
 }: EncodeOpts): Promise<void> {
+	const encoder = pick_encoder('h264', hwAccel);
 	const args = ['-i', src];
 	const vf = build_vf(height);
 	if (vf) args.push('-vf', vf);
 	if (fps) args.push('-r', String(fps));
-	args.push(
-		'-c:v',
-		'libx264',
-		'-crf',
-		'23',
-		'-preset',
-		'medium',
-		'-pix_fmt',
-		'yuv420p',
-		'-movflags',
-		'+faststart'
-	);
+	args.push('-c:v', encoder.name);
+	push_h264_quality(args, encoder);
+	args.push('-movflags', '+faststart');
 	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
 	else args.push('-an');
 	args.push('-f', 'mp4', out);
@@ -276,32 +382,30 @@ export function encodeH265Mp4({
 	has_audio,
 	height,
 	fps,
+	hwAccel = false,
 	onProgress
 }: EncodeOpts): Promise<void> {
+	const encoder = pick_encoder('hevc', hwAccel);
 	const args = ['-i', src];
 	const vf = build_vf(height);
 	if (vf) args.push('-vf', vf);
 	if (fps) args.push('-r', String(fps));
-	args.push(
-		'-c:v',
-		'libx265',
-		'-crf',
-		'28',
-		'-preset',
-		'medium',
-		'-pix_fmt',
-		'yuv420p',
-		'-tag:v',
-		'hvc1',
-		'-movflags',
-		'+faststart',
-		'-x265-params',
-		'log-level=error'
-	);
+	args.push('-c:v', encoder.name);
+	push_hevc_quality(args, encoder);
+	args.push('-tag:v', 'hvc1', '-movflags', '+faststart');
+	if (encoder.name === 'libx265') args.push('-x265-params', 'log-level=error');
 	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
 	else args.push('-an');
 	args.push('-f', 'mp4', out);
 	return run_ffmpeg(args, onProgress);
+}
+
+export function listAvailableHwAccels(): HwAccel[] {
+	if (!encoder_catalog) encoder_catalog = detect_encoders();
+	const accels = new Set<HwAccel | 'sw'>();
+	for (const e of [...encoder_catalog.h264, ...encoder_catalog.hevc]) accels.add(e.accel);
+	accels.delete('sw');
+	return Array.from(accels) as HwAccel[];
 }
 
 export function encodePoster({

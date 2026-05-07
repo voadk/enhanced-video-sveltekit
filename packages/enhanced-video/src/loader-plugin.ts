@@ -117,6 +117,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 	const cache_dir_option = options.cacheDirectory ?? null;
 	const max_jobs = options.maxJobs ?? null;
 	const lock_max_age_ms = options.lockMaxAgeMs ?? DEFAULT_LOCK_MAX_AGE_MS;
+	const hw_accel = options.hwAccel ?? false;
 
 	let vite_config: ResolvedConfig;
 	let dev_server: ViteDevServer | null = null;
@@ -154,7 +155,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, resolutions, fps: fps_cap, version: 4 };
+			const args = { formats, resolutions, fps: fps_cap, hwAccel: hw_accel, version: 5 };
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
@@ -284,9 +285,10 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 							onProgress
 						};
 
-						if (fmt === 'mp4') tasks.push(encodeH264Mp4(opts));
+						if (fmt === 'mp4') tasks.push(encodeH264Mp4({ ...opts, hwAccel: hw_accel }));
 						else if (fmt === 'webm') tasks.push(encodeVp9Webm(opts));
-						else if (fmt === 'mp4_hevc') tasks.push(encodeH265Mp4(opts));
+						else if (fmt === 'mp4_hevc')
+							tasks.push(encodeH265Mp4({ ...opts, hwAccel: hw_accel }));
 						else if (fmt === 'av1') tasks.push(encodeAv1Webm(opts));
 
 						artifact_specs.push({
