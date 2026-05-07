@@ -49,7 +49,7 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      enhanced-video:
+      enhanced-video-sveltekit:
         specifier: workspace:*
         version: link:../../packages/enhanced-video
       shadcn-svelte:

@@ -4,7 +4,7 @@ import type { AST } from 'svelte/compiler';
 import type { Plugin } from 'vite';
 import { walk } from 'zimmerframe';
 
-const RUNTIME_IMPORT = 'enhanced-video/runtime';
+const RUNTIME_IMPORT = 'enhanced-video-sveltekit/runtime';
 const PASS_THROUGH_DROP = new Set(['src', 'poster']);
 
 type AnyAttribute = AST.RegularElement['attributes'][number];

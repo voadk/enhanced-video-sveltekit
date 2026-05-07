@@ -1,4 +1,4 @@
-# enhanced-video
+# enhanced-video-sveltekit
 
 Build-time video optimization for SvelteKit, modeled on [`@sveltejs/enhanced-img`](https://svelte.dev/docs/kit/images). Drop in an `<enhanced:video>` tag, get back AV1 + H.264 sources, an auto-extracted poster, and lazy loading.
 
@@ -32,7 +32,7 @@ choco install ffmpeg           # Windows
 When editing `packages/enhanced-video/src/`:
 
 ```bash
-pnpm --filter enhanced-video dev    # tsc --watch
+pnpm --filter enhanced-video-sveltekit dev    # tsc --watch
 ```
 
 The demo picks up the rebuilt `dist/` automatically; refresh the browser.
@@ -45,7 +45,7 @@ There's a GitHub Actions workflow at [`.github/workflows/publish.yml`](.github/w
 
 1. Create an npm automation access token: <https://www.npmjs.com/settings/~/tokens> → "Generate New Token" → **Automation** type.
 2. Add it as a repo secret: GitHub repo → Settings → Secrets and variables → Actions → New repository secret → name `NPM_TOKEN`, value the token.
-3. Make sure the package name in [`packages/enhanced-video/package.json`](packages/enhanced-video/package.json) is available on npm (`npm view enhanced-video`). If taken, rename it.
+3. Make sure the package name in [`packages/enhanced-video/package.json`](packages/enhanced-video/package.json) is still available on npm (`npm view enhanced-video-sveltekit`). If taken, rename it.
 
 ### To release
 

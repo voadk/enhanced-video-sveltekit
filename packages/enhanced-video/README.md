@@ -1,4 +1,4 @@
-# enhanced-video
+# enhanced-video-sveltekit
 
 Build-time video optimization for SvelteKit. Drop in an `<enhanced:video>` tag — get back AV1 + H.264 sources, an auto-extracted poster image, lazy loading, and zero layout shift.
 
@@ -26,9 +26,9 @@ becomes (at build time):
 ## Install
 
 ```bash
-pnpm add -D enhanced-video
+pnpm add -D enhanced-video-sveltekit
 # or
-npm install -D enhanced-video
+npm install -D enhanced-video-sveltekit
 ```
 
 You also need `ffmpeg` and `ffprobe` on your `PATH`:
@@ -46,7 +46,7 @@ The plugin checks for ffmpeg on startup and fails with install instructions if i
 ```js
 // vite.config.js
 import { sveltekit } from '@sveltejs/kit/vite';
-import { enhancedVideos } from 'enhanced-video';
+import { enhancedVideos } from 'enhanced-video-sveltekit';
 import { defineConfig } from 'vite';
 
 export default defineConfig({

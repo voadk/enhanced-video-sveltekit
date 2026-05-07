@@ -23,7 +23,7 @@
     "@types/node": "^20.19.39",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
-    "enhanced-video": "workspace:*",
+    "enhanced-video-sveltekit": "workspace:*",
     "shadcn-svelte": "^1.2.7",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",

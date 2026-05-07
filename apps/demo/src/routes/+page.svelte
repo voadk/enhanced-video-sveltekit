@@ -71,7 +71,7 @@
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
 			<div class="flex items-center gap-2">
 				<HugeiconsIcon icon={Video01Icon} size={22} />
-				<span class="font-mono text-sm font-medium">enhanced-video</span>
+				<span class="font-mono text-sm font-medium">enhanced-video-sveltekit</span>
 				<Badge variant="secondary" class="ml-1 font-mono text-[10px]">v0.0.1</Badge>
 			</div>
 			<div class="flex items-center gap-2">
@@ -79,7 +79,7 @@
 					<HugeiconsIcon icon={Github01Icon} size={16} />
 					GitHub
 				</Button>
-				<Button variant="default" size="sm" href="https://www.npmjs.com/package/enhanced-video" target="_blank">
+				<Button variant="default" size="sm" href="https://www.npmjs.com/package/enhanced-video-sveltekit" target="_blank">
 					<HugeiconsIcon icon={PackageIcon} size={16} />
 					npm
 				</Button>
@@ -108,13 +108,13 @@
 						<Tabs.Trigger value="bun">bun</Tabs.Trigger>
 					</Tabs.List>
 					<Tabs.Content value="pnpm">
-						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>pnpm add -D enhanced-video</code></pre>
+						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>pnpm add -D enhanced-video-sveltekit</code></pre>
 					</Tabs.Content>
 					<Tabs.Content value="npm">
-						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>npm install -D enhanced-video</code></pre>
+						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>npm install -D enhanced-video-sveltekit</code></pre>
 					</Tabs.Content>
 					<Tabs.Content value="bun">
-						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>bun add -d enhanced-video</code></pre>
+						<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm"><code>bun add -d enhanced-video-sveltekit</code></pre>
 					</Tabs.Content>
 				</Tabs.Root>
 			</div>
@@ -243,7 +243,7 @@
 						<span class="font-mono text-xs text-muted-foreground">vite.config.js</span>
 					</div>
 					<pre class="overflow-x-auto rounded-md border bg-muted/50 p-4 font-mono text-sm leading-relaxed"><code>{`import { sveltekit } from '@sveltejs/kit/vite';
-import { enhancedVideos } from 'enhanced-video';
+import { enhancedVideos } from 'enhanced-video-sveltekit';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -272,7 +272,7 @@ export default defineConfig({
 		<div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
 			<div class="flex items-center gap-2 text-sm text-muted-foreground">
 				<HugeiconsIcon icon={Video01Icon} size={14} />
-				<span class="font-mono">enhanced-video</span>
+				<span class="font-mono">enhanced-video-sveltekit</span>
 				<Separator orientation="vertical" class="h-4" />
 				<span>MIT</span>
 			</div>
@@ -281,7 +281,7 @@ export default defineConfig({
 					<HugeiconsIcon icon={Github01Icon} size={14} />
 					GitHub
 				</Button>
-				<Button variant="ghost" size="sm" href="https://www.npmjs.com/package/enhanced-video" target="_blank">
+				<Button variant="ghost" size="sm" href="https://www.npmjs.com/package/enhanced-video-sveltekit" target="_blank">
 					<HugeiconsIcon icon={PackageIcon} size={14} />
 					npm
 				</Button>

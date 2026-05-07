@@ -25,10 +25,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type-check
-        run: pnpm --filter enhanced-video check
+        run: pnpm --filter enhanced-video-sveltekit check
 
       - name: Build
-        run: pnpm --filter enhanced-video build
+        run: pnpm --filter enhanced-video-sveltekit build
 
       - name: Verify tarball contents
         working-directory: packages/enhanced-video
