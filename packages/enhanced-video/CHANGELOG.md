@@ -5,6 +5,16 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.5.0] - 2026-05-07
+
+### Documentation
+
+- Rewrite README for v0.4.0 feature set (394f757)
+
+### Features
+
+- Respect prefers-reduced-motion and auto-pause off-screen (a91df87)
+
 ## [0.4.0] - 2026-05-07
 
 ### Features
