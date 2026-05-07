@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CachedMeta, EncodeArgs } from './types.js';
@@ -68,4 +68,46 @@ export function readMeta(dir: string): CachedMeta | null {
 
 export function writeMeta(dir: string, meta: CachedMeta): void {
 	writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta));
+}
+
+const LOCK_FILE = 'encode.lock';
+
+/** Try to acquire an exclusive encode lock. Returns true if acquired, false if another encoder holds a fresh lock. */
+export function tryAcquireLock(dir: string, maxAgeMs: number): boolean {
+	const lock = path.join(dir, LOCK_FILE);
+	if (existsSync(lock)) {
+		try {
+			const stat = statSync(lock);
+			const ageMs = Date.now() - stat.mtimeMs;
+			if (ageMs < maxAgeMs) return false;
+		} catch {
+			/* fall through and overwrite */
+		}
+	}
+	try {
+		writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function releaseLock(dir: string): void {
+	const lock = path.join(dir, LOCK_FILE);
+	try {
+		unlinkSync(lock);
+	} catch {
+		/* ignore */
+	}
+}
+
+export function isLocked(dir: string, maxAgeMs: number): boolean {
+	const lock = path.join(dir, LOCK_FILE);
+	if (!existsSync(lock)) return false;
+	try {
+		const stat = statSync(lock);
+		return Date.now() - stat.mtimeMs < maxAgeMs;
+	} catch {
+		return false;
+	}
 }

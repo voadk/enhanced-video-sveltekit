@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import type { Plugin, ResolvedConfig, Rollup } from 'vite';
+import type { Plugin, ResolvedConfig, Rollup, ViteDevServer } from 'vite';
 import {
 	assertFfmpeg,
 	configureConcurrency,
@@ -9,9 +9,18 @@ import {
 	encodeH265Mp4,
 	encodePoster,
 	encodeVp9Webm,
-	probe
+	probe,
+	type ProbeResult
 } from './ffmpeg.js';
-import { getCacheDir, getCacheKey, readMeta, writeMeta } from './cache.js';
+import {
+	getCacheDir,
+	getCacheKey,
+	isLocked,
+	readMeta,
+	releaseLock,
+	tryAcquireLock,
+	writeMeta
+} from './cache.js';
 import { progress } from './progress.js';
 import type {
 	CachedArtifact,
@@ -27,6 +36,7 @@ const BASE_PATH = '/@enhanced-video/';
 
 const DEFAULT_FORMATS: VideoFormat[] = ['mp4', 'webm'];
 const DEFAULT_RESOLUTIONS = [1080, 720, 480];
+const DEFAULT_LOCK_MAX_AGE_MS = 7200000;
 
 const FORMAT_EXT: Record<VideoFormat, string> = {
 	mp4: 'mp4',
@@ -47,6 +57,16 @@ const FORMAT_SOURCE_TYPE: Record<VideoFormat, string> = {
 	webm: 'video/webm; codecs="vp09.00.10.08"',
 	mp4_hevc: 'video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"',
 	av1: 'video/webm; codecs="av01.0.04M.08"'
+};
+
+const SOURCE_CONTENT_TYPE: Record<string, string> = {
+	mp4: 'video/mp4',
+	mov: 'video/quicktime',
+	m4v: 'video/x-m4v',
+	webm: 'video/webm',
+	mkv: 'video/x-matroska',
+	ogg: 'video/ogg',
+	ogv: 'video/ogg'
 };
 
 const POSTER_CONTENT_TYPE = 'image/jpeg';
@@ -79,11 +99,14 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 	const fps_cap = options.fps ?? null;
 	const cache_dir_option = options.cacheDirectory ?? null;
 	const max_jobs = options.maxJobs ?? null;
+	const lock_max_age_ms = options.lockMaxAgeMs ?? DEFAULT_LOCK_MAX_AGE_MS;
 
 	let vite_config: ResolvedConfig;
+	let dev_server: ViteDevServer | null = null;
 	const generated_assets = new Map<string, AssetEntry>();
 	const source_to_ids = new Map<string, Set<string>>();
 	const logged_cache_hits = new Set<string>();
+	const in_flight_encodes = new Map<string, Promise<void>>();
 
 	return {
 		name: 'enhanced-video:loader',
@@ -114,36 +137,89 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
+			track_source(source_to_ids, pathname, id);
+
 			const cached = readMeta(cache_dir);
-			let meta: CachedMeta;
 			if (cached) {
 				if (!logged_cache_hits.has(id)) {
 					logged_cache_hits.add(id);
-					const formats_seen = unique_sorted_desc(
-						cached.artifacts.map((a) => a.height)
-					).join('p,');
-					progress.logCacheHit(
-						path.basename(pathname),
-						[...new Set(cached.artifacts.map((a) => a.format)), `${formats_seen}p`]
-					);
+					const heights = unique_sorted_desc(cached.artifacts.map((a) => a.height));
+					progress.logCacheHit(path.basename(pathname), [
+						...new Set(cached.artifacts.map((a) => a.format)),
+						heights.map((h) => `${h}p`).join(',')
+					]);
 				}
-				meta = cached;
-			} else {
-				const probed = await probe(pathname);
+				return emit_module.call(this, cached, key, pathname);
+			}
 
-				const target_heights = resolutions.filter((h) => h <= probed.height);
-				if (target_heights.length === 0) target_heights.push(probed.height);
+			const probed = await probe(pathname);
+
+			if (vite_config.command === 'serve') {
+				kick_background_encode(id, pathname, probed, key, cache_dir);
+				return emit_placeholder.call(this, probed, key, pathname);
+			}
+
+			await encode_all(id, pathname, probed, cache_dir);
+			const meta = readMeta(cache_dir);
+			if (!meta) throw new Error(`enhanced-video: encode succeeded but meta missing for ${pathname}`);
+			return emit_module.call(this, meta, key, pathname);
+
+			function kick_background_encode(
+				module_id: string,
+				src_path: string,
+				probed_info: ProbeResult,
+				cache_key: string,
+				cache_path: string
+			): void {
+				if (in_flight_encodes.has(cache_key)) return;
+				if (isLocked(cache_path, lock_max_age_ms)) return;
+				if (!tryAcquireLock(cache_path, lock_max_age_ms)) return;
+
+				const promise = (async () => {
+					try {
+						await encode_all(module_id, src_path, probed_info, cache_path);
+					} finally {
+						releaseLock(cache_path);
+					}
+				})()
+					.then(() => {
+						const ids = source_to_ids.get(src_path);
+						if (!dev_server || !ids) return;
+						for (const dep_id of ids) {
+							const mod = dev_server.moduleGraph.getModuleById(dep_id);
+							if (mod) dev_server.moduleGraph.invalidateModule(mod);
+						}
+						dev_server.hot.send({ type: 'full-reload', path: '*' });
+					})
+					.catch((err) => {
+						progress.fail(module_id, err instanceof Error ? err.message : String(err));
+					})
+					.finally(() => {
+						in_flight_encodes.delete(cache_key);
+					});
+
+				in_flight_encodes.set(cache_key, promise);
+			}
+
+			async function encode_all(
+				module_id: string,
+				src_path: string,
+				probed_info: ProbeResult,
+				cache_path: string
+			): Promise<void> {
+				const target_heights = resolutions.filter((h) => h <= probed_info.height);
+				if (target_heights.length === 0) target_heights.push(probed_info.height);
 
 				const effective_fps =
-					fps_cap !== null && fps_cap > 0 ? Math.min(fps_cap, probed.fps) : null;
+					fps_cap !== null && fps_cap > 0 ? Math.min(fps_cap, probed_info.fps) : null;
 
 				const tasks: Array<Promise<void>> = [];
 				const artifact_specs: CachedArtifact[] = [];
 				const tracked_formats = formats.map((f) => f);
 
-				const job_label = path.basename(pathname);
-				const duration_us = Math.max(1, Math.round(probed.duration * 1_000_000));
-				progress.start(id, job_label, duration_us, tracked_formats);
+				const job_label = path.basename(src_path);
+				const duration_us = Math.max(1, Math.round(probed_info.duration * 1_000_000));
+				progress.start(module_id, job_label, duration_us, tracked_formats);
 
 				const progress_max: Record<string, number> = {};
 				const progress_current: Record<string, number> = {};
@@ -156,60 +232,60 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						progress_max[fmt],
 						progress_current[fmt] + deltaUs
 					);
-					progress.update(id, fmt, progress_current[fmt]);
+					progress.update(module_id, fmt, progress_current[fmt]);
 				};
 
-				try {
-					for (const fmt of formats) {
-						let last_time = 0;
-						for (const out_height of target_heights) {
-							const out_width = aspect_width(probed.width, probed.height, out_height);
-							const ext = FORMAT_EXT[fmt];
-							const out = path.join(cache_dir, `video_${out_height}p.${ext}`);
+				for (const fmt of formats) {
+					let last_time = 0;
+					for (const out_height of target_heights) {
+						const out_width = aspect_width(probed_info.width, probed_info.height, out_height);
+						const ext = FORMAT_EXT[fmt];
+						const out = path.join(cache_path, `video_${out_height}p.${ext}`);
 
-							const onProgress = (us: number) => {
-								const delta = Math.max(0, us - last_time);
-								last_time = us;
-								updateProgress(fmt, delta);
-							};
+						const onProgress = (us: number) => {
+							const delta = Math.max(0, us - last_time);
+							last_time = us;
+							updateProgress(fmt, delta);
+						};
 
-							const opts = {
-								src: pathname,
-								out,
-								has_audio: probed.has_audio,
-								height: out_height,
-								fps: effective_fps ?? undefined,
-								onProgress
-							};
+						const opts = {
+							src: src_path,
+							out,
+							has_audio: probed_info.has_audio,
+							height: out_height,
+							fps: effective_fps ?? undefined,
+							onProgress
+						};
 
-							if (fmt === 'mp4') tasks.push(encodeH264Mp4(opts));
-							else if (fmt === 'webm') tasks.push(encodeVp9Webm(opts));
-							else if (fmt === 'mp4_hevc') tasks.push(encodeH265Mp4(opts));
-							else if (fmt === 'av1') tasks.push(encodeAv1Webm(opts));
+						if (fmt === 'mp4') tasks.push(encodeH264Mp4(opts));
+						else if (fmt === 'webm') tasks.push(encodeVp9Webm(opts));
+						else if (fmt === 'mp4_hevc') tasks.push(encodeH265Mp4(opts));
+						else if (fmt === 'av1') tasks.push(encodeAv1Webm(opts));
 
-							artifact_specs.push({
-								format: fmt,
-								height: out_height,
-								width: out_width,
-								file: out
-							});
-						}
+						artifact_specs.push({
+							format: fmt,
+							height: out_height,
+							width: out_width,
+							file: out
+						});
 					}
+				}
 
-					const poster_height = target_heights[0];
-					const poster_out = path.join(cache_dir, 'poster.jpg');
-					tasks.push(encodePoster({ src: pathname, out: poster_out, height: poster_height }));
+				const poster_height = target_heights[0];
+				const poster_out = path.join(cache_path, 'poster.jpg');
+				tasks.push(encodePoster({ src: src_path, out: poster_out, height: poster_height }));
 
+				try {
 					await Promise.all(tasks);
 
-					meta = {
-						width: probed.width,
-						height: probed.height,
-						duration: probed.duration,
+					const meta: CachedMeta = {
+						width: probed_info.width,
+						height: probed_info.height,
+						duration: probed_info.duration,
 						artifacts: artifact_specs,
 						poster_file: poster_out
-					} satisfies CachedMeta;
-					writeMeta(cache_dir, meta);
+					};
+					writeMeta(cache_path, meta);
 
 					const sizes: Record<string, number> = {};
 					for (const a of artifact_specs) {
@@ -220,38 +296,77 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 							/* ignore */
 						}
 					}
-					progress.finish(id, sizes);
+					progress.finish(module_id, sizes);
 				} catch (err) {
-					progress.fail(id, err instanceof Error ? err.message : String(err));
+					progress.fail(module_id, err instanceof Error ? err.message : String(err));
 					throw err;
 				}
 			}
 
-			const sources: EnhancedVideoSource[] = [];
-			for (const a of meta.artifacts) {
-				const ext = FORMAT_EXT[a.format];
-				const url = await register_asset.call(this, a.file, ext, key, pathname, a.height);
-				sources.push({
-					src: url,
-					type: FORMAT_SOURCE_TYPE[a.format] ?? FORMAT_CONTENT_TYPE[a.format],
-					format: a.format,
-					height: a.height,
-					width: a.width
-				});
+			async function emit_module(
+				this: Rollup.PluginContext,
+				cached_meta: CachedMeta,
+				cache_key: string,
+				src_path: string
+			): Promise<string> {
+				const sources: EnhancedVideoSource[] = [];
+				for (const a of cached_meta.artifacts) {
+					const ext = FORMAT_EXT[a.format];
+					const url = await register_asset.call(this, a.file, ext, cache_key, src_path, a.height);
+					sources.push({
+						src: url,
+						type: FORMAT_SOURCE_TYPE[a.format] ?? FORMAT_CONTENT_TYPE[a.format],
+						format: a.format,
+						height: a.height,
+						width: a.width
+					});
+				}
+				const poster_url = await register_asset.call(
+					this,
+					cached_meta.poster_file,
+					'jpg',
+					cache_key,
+					src_path
+				);
+				const out_meta: EnhancedVideoMetadata = {
+					width: cached_meta.width,
+					height: cached_meta.height,
+					duration: cached_meta.duration,
+					poster: poster_url,
+					sources
+				};
+				return `export default ${JSON.stringify(out_meta)};`;
 			}
-			const poster_url = await register_asset.call(this, meta.poster_file, 'jpg', key, pathname);
 
-			const out_meta: EnhancedVideoMetadata = {
-				width: meta.width,
-				height: meta.height,
-				duration: meta.duration,
-				poster: poster_url,
-				sources
-			};
+			async function emit_placeholder(
+				this: Rollup.PluginContext,
+				probed_info: ProbeResult,
+				cache_key: string,
+				src_path: string
+			): Promise<string> {
+				const src_ext = path.extname(src_path).slice(1).toLowerCase() || 'mp4';
+				const content_type = SOURCE_CONTENT_TYPE[src_ext] ?? 'video/mp4';
+				const dev_id = `${cache_key}.source.${src_ext}`;
+				generated_assets.set(dev_id, { path: src_path, contentType: content_type });
+				const source_url = BASE_PATH + dev_id;
 
-			track_source(source_to_ids, pathname, id);
-
-			return `export default ${JSON.stringify(out_meta)};`;
+				const out_meta: EnhancedVideoMetadata = {
+					width: probed_info.width,
+					height: probed_info.height,
+					duration: probed_info.duration,
+					poster: '',
+					sources: [
+						{
+							src: source_url,
+							type: content_type,
+							format: 'mp4',
+							width: probed_info.width,
+							height: probed_info.height
+						}
+					]
+				};
+				return `export default ${JSON.stringify(out_meta)};`;
+			}
 
 			async function register_asset(
 				this: Rollup.PluginContext,
@@ -282,6 +397,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 		},
 
 		configureServer(server) {
+			dev_server = server;
 			server.middlewares.use((req, res, next) => {
 				if (!req.url || !req.url.startsWith(BASE_PATH)) return next();
 				const id = req.url.slice(BASE_PATH.length).split('?')[0];

@@ -114,17 +114,19 @@
 			{/each}
 		{/if}
 	</video>
-	<img
-		class="enhanced-video-poster"
-		class:enhanced-video-poster-hidden={posterHidden}
-		src={metadata.poster}
-		alt=""
-		aria-hidden="true"
-		loading="lazy"
-		decoding="async"
-		width={metadata.width}
-		height={metadata.height}
-	/>
+	{#if metadata.poster}
+		<img
+			class="enhanced-video-poster"
+			class:enhanced-video-poster-hidden={posterHidden}
+			src={metadata.poster}
+			alt=""
+			aria-hidden="true"
+			loading="lazy"
+			decoding="async"
+			width={metadata.width}
+			height={metadata.height}
+		/>
+	{/if}
 </div>
 
 <style>

@@ -11,6 +11,8 @@ export interface EnhancedVideosOptions {
 	cacheDirectory?: string;
 	/** Concurrent ffmpeg processes. Default: max(1, cpus - 1). */
 	maxJobs?: number;
+	/** Stale lock cleanup threshold (ms). Locks older than this are treated as orphaned. Default: 7200000 (2h). */
+	lockMaxAgeMs?: number;
 }
 
 export interface EnhancedVideoSource {
