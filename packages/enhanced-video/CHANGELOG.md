@@ -5,6 +5,16 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.7.0] - 2026-05-07
+
+### CI
+
+- Bump Node to 22 in publish workflow (b4e02c3)
+
+### Features
+
+- Multi-format poster (AVIF/WebP/JPG) via <picture> (0a04437)
+
 ## [0.6.0] - 2026-05-07
 
 ### Features
