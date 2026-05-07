@@ -408,30 +408,19 @@ export function listAvailableHwAccels(): HwAccel[] {
 	return Array.from(accels) as HwAccel[];
 }
 
-export function encodePoster({
+/** Extract the first frame as a PNG buffer via ffmpeg. PNG is universal — every
+ *  ffmpeg build supports it. The buffer is then handed to sharp for format
+ *  conversion (JPG/WebP/AVIF), which doesn't depend on ffmpeg's compile-time
+ *  flags. */
+export function extractFirstFramePng({
 	src,
-	out,
 	height
 }: {
 	src: string;
-	out: string;
 	height?: number;
-}): Promise<void> {
+}): Promise<Buffer> {
 	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
-	return run_ffmpeg(['-i', src, '-vf', filter, '-frames:v', '1', '-q:v', '3', out]);
-}
-
-export function encodePosterWebp({
-	src,
-	out,
-	height
-}: {
-	src: string;
-	out: string;
-	height?: number;
-}): Promise<void> {
-	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
-	return run_ffmpeg([
+	return run_ffmpeg_capture([
 		'-i',
 		src,
 		'-vf',
@@ -439,40 +428,42 @@ export function encodePosterWebp({
 		'-frames:v',
 		'1',
 		'-c:v',
-		'libwebp',
-		'-quality',
-		'80',
-		out
+		'png',
+		'-f',
+		'image2pipe',
+		'pipe:1'
 	]);
 }
 
-export function encodePosterAvif({
-	src,
-	out,
-	height
-}: {
-	src: string;
-	out: string;
-	height?: number;
-}): Promise<void> {
-	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
-	return run_ffmpeg([
-		'-i',
-		src,
-		'-vf',
-		filter,
-		'-frames:v',
-		'1',
-		'-c:v',
-		'libsvtav1',
-		'-svtav1-params',
-		'log-level=3',
-		'-still-picture',
-		'1',
-		'-crf',
-		'30',
-		out
-	]);
+function run_ffmpeg_capture(args: string[]): Promise<Buffer> {
+	return limiter(
+		() =>
+			new Promise<Buffer>((resolve, reject) => {
+				const child = spawn(
+					ffmpeg_bin,
+					['-y', '-hide_banner', '-loglevel', 'error', '-nostats', ...args],
+					{ stdio: ['ignore', 'pipe', 'pipe'] }
+				);
+				const chunks: Buffer[] = [];
+				let stderr = '';
+				child.stdout.on('data', (chunk: Buffer) => {
+					chunks.push(chunk);
+				});
+				child.stderr.on('data', (chunk: Buffer) => {
+					stderr += chunk.toString();
+				});
+				child.on('error', reject);
+				child.on('close', (code, signal) => {
+					if (code === 0) resolve(Buffer.concat(chunks));
+					else
+						reject(
+							new Error(
+								`enhanced-video: ffmpeg failed (exit ${code ?? `signal ${signal}`})\n${stderr.trim().slice(-2000)}`
+							)
+						);
+				});
+			})
+	);
 }
 
 function run_ffmpeg(args: string[], onProgress?: (outTimeUs: number) => void): Promise<void> {

@@ -8,13 +8,11 @@ import {
 	encodeAv1Webm,
 	encodeH264Mp4,
 	encodeH265Mp4,
-	encodePoster,
-	encodePosterAvif,
-	encodePosterWebp,
 	encodeVp9Webm,
 	probe,
 	type ProbeResult
 } from './ffmpeg.js';
+import { encodePosterSet } from './poster.js';
 import {
 	getCacheDir,
 	getCacheKey,
@@ -155,7 +153,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, resolutions, fps: fps_cap, hwAccel: hw_accel, version: 5 };
+			const args = { formats, resolutions, fps: fps_cap, hwAccel: hw_accel, version: 6 };
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
@@ -306,24 +304,17 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 				const poster_avif = path.join(cache_path, 'poster.avif');
 				const poster_files: CachedPoster = { jpg: poster_jpg };
 
-				tasks.push(encodePoster({ src: src_path, out: poster_jpg, height: poster_height }));
 				tasks.push(
-					encodePosterWebp({ src: src_path, out: poster_webp, height: poster_height })
-						.then(() => {
-							poster_files.webp = poster_webp;
-						})
-						.catch(() => {
-							/* webp encoder not available; skip */
-						})
-				);
-				tasks.push(
-					encodePosterAvif({ src: src_path, out: poster_avif, height: poster_height })
-						.then(() => {
-							poster_files.avif = poster_avif;
-						})
-						.catch(() => {
-							/* avif encoder not available; skip */
-						})
+					encodePosterSet({
+						src: src_path,
+						jpgOut: poster_jpg,
+						webpOut: poster_webp,
+						avifOut: poster_avif,
+						height: poster_height
+					}).then((out) => {
+						poster_files.webp = out.webp;
+						poster_files.avif = out.avif;
+					})
 				);
 
 				try {
