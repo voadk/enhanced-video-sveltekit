@@ -7,10 +7,17 @@
     "dev": "pnpm --filter demo dev",
     "build": "pnpm --filter demo build",
     "preview": "pnpm --filter demo preview",
-    "check": "pnpm -r check"
+    "check": "pnpm -r check",
+    "view:cliff": "git-cliff --unreleased",
+    "prepare": "husky"
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "husky": "^9.1.7"
   }
 }
