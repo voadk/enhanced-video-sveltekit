@@ -6,6 +6,7 @@ import { walk } from 'zimmerframe';
 
 const RUNTIME_IMPORT = 'enhanced-video-sveltekit/runtime';
 const PASS_THROUGH_DROP = new Set(['src', 'poster']);
+const TAG_NAMES = new Set(['enhanced:video', 'video:enhanced']);
 
 type AnyAttribute = AST.RegularElement['attributes'][number];
 
@@ -32,7 +33,7 @@ export function markup_plugin(): Plugin {
 		transform: {
 			order: 'pre',
 			filter: {
-				code: /<enhanced:video/
+				code: /<enhanced:video|<video:enhanced/
 			},
 			handler(content, filename) {
 				const s = new MagicString(content);
@@ -43,19 +44,20 @@ export function markup_plugin(): Plugin {
 
 				walk(ast as unknown as AST.SvelteNode, null, {
 					RegularElement(node, { next }) {
-						if (node.name !== 'enhanced:video') {
+						if (!TAG_NAMES.has(node.name)) {
 							next();
 							return;
 						}
+						const tag_name = node.name;
 						const src_attr = get_attr_value(node, 'src');
 						if (!src_attr) {
 							throw new Error(
-								`enhanced-video: <enhanced:video> requires a src attribute (in ${filename})`
+								`enhanced-video: <${tag_name}> requires a src attribute (in ${filename})`
 							);
 						}
 						if (src_attr.type === 'ExpressionTag') {
 							throw new Error(
-								`enhanced-video: dynamic src={...} is not supported yet. Use a string literal (in ${filename}).`
+								`enhanced-video: dynamic src={...} is not supported yet on <${tag_name}>. Use a string literal (in ${filename}).`
 							);
 						}
 
@@ -92,7 +94,9 @@ export function markup_plugin(): Plugin {
 
 				if (ast.css) {
 					const css = content.substring(ast.css.start, ast.css.end);
-					const modified = css.replaceAll('enhanced\\:video', 'video');
+					let modified = css;
+					modified = modified.replaceAll('enhanced\\:video', 'video');
+					modified = modified.replaceAll('video\\:enhanced', 'video');
 					if (modified !== css) {
 						s.update(ast.css.start, ast.css.end, modified);
 					}

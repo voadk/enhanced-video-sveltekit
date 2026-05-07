@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Plugin, ResolvedConfig, Rollup, ViteDevServer } from 'vite';
 import {
 	assertFfmpeg,
+	configureBinaries,
 	configureConcurrency,
 	encodeAv1Webm,
 	encodeH264Mp4,
@@ -32,6 +33,7 @@ import type {
 } from './types.js';
 
 const QUERY = 'enhanced-video';
+const QUERY_COMPAT = 'enhanced';
 const BASE_PATH = '/@enhanced-video/';
 
 const DEFAULT_FORMATS: VideoFormat[] = ['mp4', 'webm'];
@@ -72,7 +74,14 @@ const SOURCE_CONTENT_TYPE: Record<string, string> = {
 const POSTER_CONTENT_TYPE = 'image/jpeg';
 
 function has_query(id: string): boolean {
-	return id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`);
+	if (id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`)) return true;
+	const m = id.match(/[?&]enhanced(?:&|$|=)/);
+	return m !== null;
+}
+
+function is_compat_query(id: string): boolean {
+	if (id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`)) return false;
+	return /[?&]enhanced(?:&|$|=)/.test(id);
 }
 
 function parse_id(id: string): { pathname: string; params: URLSearchParams } {
@@ -114,6 +123,10 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 		configResolved(config) {
 			vite_config = config;
+			configureBinaries({
+				ffmpegPath: options.ffmpegPath,
+				ffprobePath: options.ffprobePath
+			});
 			assertFfmpeg();
 			if (max_jobs !== null) configureConcurrency(max_jobs);
 		},
@@ -139,6 +152,8 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			track_source(source_to_ids, pathname, id);
 
+			const compat = is_compat_query(id);
+
 			const cached = readMeta(cache_dir);
 			if (cached) {
 				if (!logged_cache_hits.has(id)) {
@@ -149,7 +164,9 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						heights.map((h) => `${h}p`).join(',')
 					]);
 				}
-				return emit_module.call(this, cached, key, pathname);
+				return compat
+					? emit_compat_module.call(this, cached, key, pathname)
+					: emit_module.call(this, cached, key, pathname);
 			}
 
 			const probed = await probe(pathname);
@@ -162,7 +179,9 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 			await encode_all(id, pathname, probed, cache_dir);
 			const meta = readMeta(cache_dir);
 			if (!meta) throw new Error(`enhanced-video: encode succeeded but meta missing for ${pathname}`);
-			return emit_module.call(this, meta, key, pathname);
+			return compat
+				? emit_compat_module.call(this, meta, key, pathname)
+				: emit_module.call(this, meta, key, pathname);
 
 			function kick_background_encode(
 				module_id: string,
@@ -336,6 +355,27 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 					sources
 				};
 				return `export default ${JSON.stringify(out_meta)};`;
+			}
+
+			async function emit_compat_module(
+				this: Rollup.PluginContext,
+				cached_meta: CachedMeta,
+				cache_key: string,
+				src_path: string
+			): Promise<string> {
+				const out: Record<string, Record<string, string>> = {
+					mp4: {},
+					webm: {},
+					mp4_hevc: {},
+					av1: {}
+				};
+				for (const a of cached_meta.artifacts) {
+					const ext = FORMAT_EXT[a.format];
+					const url = await register_asset.call(this, a.file, ext, cache_key, src_path, a.height);
+					if (!out[a.format]) out[a.format] = {};
+					out[a.format][`${a.height}p`] = url;
+				}
+				return `export default ${JSON.stringify(out)};`;
 			}
 
 			async function emit_placeholder(

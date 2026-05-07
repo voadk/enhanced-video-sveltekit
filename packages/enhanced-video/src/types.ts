@@ -13,6 +13,10 @@ export interface EnhancedVideosOptions {
 	maxJobs?: number;
 	/** Stale lock cleanup threshold (ms). Locks older than this are treated as orphaned. Default: 7200000 (2h). */
 	lockMaxAgeMs?: number;
+	/** Explicit path to the ffmpeg binary. Overrides static-binary autodetection and PATH. */
+	ffmpegPath?: string;
+	/** Explicit path to the ffprobe binary. Overrides static-binary autodetection and PATH. */
+	ffprobePath?: string;
 }
 
 export interface EnhancedVideoSource {

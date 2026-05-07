@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import pLimit, { type LimitFunction } from 'p-limit';
 
@@ -9,15 +10,73 @@ export function configureConcurrency(maxJobs: number): void {
 	limiter = pLimit(n);
 }
 
+const node_require = createRequire(import.meta.url);
+
+let ffmpeg_bin = 'ffmpeg';
+let ffprobe_bin = 'ffprobe';
+let binaries_resolved = false;
+
+function try_resolve_static(): { ffmpeg?: string; ffprobe?: string } {
+	const out: { ffmpeg?: string; ffprobe?: string } = {};
+	try {
+		const m = node_require('ffmpeg-ffprobe-static') as {
+			ffmpegPath?: string;
+			ffprobePath?: string;
+		};
+		if (typeof m.ffmpegPath === 'string') out.ffmpeg = m.ffmpegPath;
+		if (typeof m.ffprobePath === 'string') out.ffprobe = m.ffprobePath;
+	} catch {
+		/* not installed */
+	}
+	if (!out.ffmpeg) {
+		try {
+			const m = node_require('ffmpeg-static');
+			const p = typeof m === 'string' ? m : (m && m.default) || (m && m.path);
+			if (typeof p === 'string') out.ffmpeg = p;
+		} catch {
+			/* not installed */
+		}
+	}
+	if (!out.ffprobe) {
+		try {
+			const m = node_require('ffprobe-static') as { path?: string } | string;
+			const p = typeof m === 'string' ? m : m?.path;
+			if (typeof p === 'string') out.ffprobe = p;
+		} catch {
+			/* not installed */
+		}
+	}
+	return out;
+}
+
+export function configureBinaries(opts: { ffmpegPath?: string; ffprobePath?: string }): void {
+	binaries_resolved = false;
+	ffmpeg_bin = 'ffmpeg';
+	ffprobe_bin = 'ffprobe';
+
+	const found = try_resolve_static();
+	if (found.ffmpeg) ffmpeg_bin = found.ffmpeg;
+	if (found.ffprobe) ffprobe_bin = found.ffprobe;
+
+	if (opts.ffmpegPath) ffmpeg_bin = opts.ffmpegPath;
+	if (opts.ffprobePath) ffprobe_bin = opts.ffprobePath;
+}
+
 let ffmpeg_banner_cache: string | null = null;
 
 export function assertFfmpeg(): string {
 	if (ffmpeg_banner_cache !== null) return ffmpeg_banner_cache;
+	if (!binaries_resolved) {
+		const found = try_resolve_static();
+		if (found.ffmpeg && ffmpeg_bin === 'ffmpeg') ffmpeg_bin = found.ffmpeg;
+		if (found.ffprobe && ffprobe_bin === 'ffprobe') ffprobe_bin = found.ffprobe;
+		binaries_resolved = true;
+	}
 	let ffmpeg_result;
 	let ffprobe_result;
 	try {
-		ffmpeg_result = spawnSync('ffmpeg', ['-version'], { encoding: 'utf-8' });
-		ffprobe_result = spawnSync('ffprobe', ['-version'], { encoding: 'utf-8' });
+		ffmpeg_result = spawnSync(ffmpeg_bin, ['-version'], { encoding: 'utf-8' });
+		ffprobe_result = spawnSync(ffprobe_bin, ['-version'], { encoding: 'utf-8' });
 	} catch (err) {
 		throw new Error(missing_message(err instanceof Error ? err.message : String(err)));
 	}
@@ -72,7 +131,7 @@ function parse_fps(rate: string | undefined): number {
 }
 
 export async function probe(src_path: string): Promise<ProbeResult> {
-	const stdout = await run_capture('ffprobe', [
+	const stdout = await run_capture(ffprobe_bin, [
 		'-v',
 		'error',
 		'-print_format',
@@ -264,7 +323,7 @@ function run_ffmpeg(args: string[], onProgress?: (outTimeUs: number) => void): P
 			new Promise<void>((resolve, reject) => {
 				const base = ['-y', '-hide_banner', '-loglevel', 'error', '-nostats'];
 				if (onProgress) base.push('-progress', 'pipe:1');
-				const child = spawn('ffmpeg', [...base, ...args], {
+				const child = spawn(ffmpeg_bin, [...base, ...args], {
 					stdio: ['ignore', onProgress ? 'pipe' : 'ignore', 'pipe']
 				});
 				let stderr = '';
