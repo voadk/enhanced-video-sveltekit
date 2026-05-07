@@ -27,6 +27,15 @@ export interface EnhancedVideoSource {
 	height: number;
 }
 
+export interface EnhancedVideoPoster {
+	/** Always present — universal fallback for `<img>` */
+	jpg: string;
+	/** WebP variant (~30% smaller than jpg). Skipped if encoder unavailable. */
+	webp?: string;
+	/** AVIF variant (~50% smaller than jpg). Skipped if encoder unavailable. */
+	avif?: string;
+}
+
 export interface EnhancedVideoMetadata {
 	/** Source video width in px */
 	width: number;
@@ -34,7 +43,7 @@ export interface EnhancedVideoMetadata {
 	height: number;
 	/** Source video duration in seconds */
 	duration: number;
-	poster: string;
+	poster: EnhancedVideoPoster;
 	sources: EnhancedVideoSource[];
 }
 
@@ -45,12 +54,18 @@ export interface CachedArtifact {
 	file: string;
 }
 
+export interface CachedPoster {
+	jpg: string;
+	webp?: string;
+	avif?: string;
+}
+
 export interface CachedMeta {
 	width: number;
 	height: number;
 	duration: number;
 	artifacts: CachedArtifact[];
-	poster_file: string;
+	poster_files: CachedPoster;
 }
 
 export interface EncodeArgs {

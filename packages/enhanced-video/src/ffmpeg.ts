@@ -317,6 +317,60 @@ export function encodePoster({
 	return run_ffmpeg(['-i', src, '-vf', filter, '-frames:v', '1', '-q:v', '3', out]);
 }
 
+export function encodePosterWebp({
+	src,
+	out,
+	height
+}: {
+	src: string;
+	out: string;
+	height?: number;
+}): Promise<void> {
+	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
+	return run_ffmpeg([
+		'-i',
+		src,
+		'-vf',
+		filter,
+		'-frames:v',
+		'1',
+		'-c:v',
+		'libwebp',
+		'-quality',
+		'80',
+		out
+	]);
+}
+
+export function encodePosterAvif({
+	src,
+	out,
+	height
+}: {
+	src: string;
+	out: string;
+	height?: number;
+}): Promise<void> {
+	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
+	return run_ffmpeg([
+		'-i',
+		src,
+		'-vf',
+		filter,
+		'-frames:v',
+		'1',
+		'-c:v',
+		'libsvtav1',
+		'-svtav1-params',
+		'log-level=3',
+		'-still-picture',
+		'1',
+		'-crf',
+		'30',
+		out
+	]);
+}
+
 function run_ffmpeg(args: string[], onProgress?: (outTimeUs: number) => void): Promise<void> {
 	return limiter(
 		() =>

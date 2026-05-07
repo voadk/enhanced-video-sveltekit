@@ -187,18 +187,27 @@
 			{/each}
 		{/if}
 	</video>
-	{#if metadata.poster}
-		<img
+	{#if metadata.poster && metadata.poster.jpg}
+		<picture
 			class="enhanced-video-poster"
 			class:enhanced-video-poster-hidden={posterHidden}
-			src={metadata.poster}
-			alt=""
-			aria-hidden="true"
-			loading="lazy"
-			decoding="async"
-			width={metadata.width}
-			height={metadata.height}
-		/>
+		>
+			{#if metadata.poster.avif}
+				<source type="image/avif" srcset={metadata.poster.avif} />
+			{/if}
+			{#if metadata.poster.webp}
+				<source type="image/webp" srcset={metadata.poster.webp} />
+			{/if}
+			<img
+				src={metadata.poster.jpg}
+				alt=""
+				aria-hidden="true"
+				loading="lazy"
+				decoding="async"
+				width={metadata.width}
+				height={metadata.height}
+			/>
+		</picture>
 	{/if}
 	{#if loading === 'click' && !clickedToPlay}
 		<button
@@ -221,7 +230,8 @@
 		overflow: hidden;
 	}
 	.enhanced-video-wrapper > video,
-	.enhanced-video-wrapper > .enhanced-video-poster {
+	.enhanced-video-wrapper > .enhanced-video-poster,
+	.enhanced-video-wrapper > .enhanced-video-poster img {
 		position: absolute;
 		inset: 0;
 		width: 100%;

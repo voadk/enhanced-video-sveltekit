@@ -9,6 +9,8 @@ import {
 	encodeH264Mp4,
 	encodeH265Mp4,
 	encodePoster,
+	encodePosterAvif,
+	encodePosterWebp,
 	encodeVp9Webm,
 	probe,
 	type ProbeResult
@@ -26,7 +28,9 @@ import { progress } from './progress.js';
 import type {
 	CachedArtifact,
 	CachedMeta,
+	CachedPoster,
 	EnhancedVideoMetadata,
+	EnhancedVideoPoster,
 	EnhancedVideoSource,
 	EnhancedVideosOptions,
 	VideoFormat
@@ -71,7 +75,11 @@ const SOURCE_CONTENT_TYPE: Record<string, string> = {
 	ogv: 'video/ogg'
 };
 
-const POSTER_CONTENT_TYPE = 'image/jpeg';
+const POSTER_CONTENT_TYPES: Record<string, string> = {
+	jpg: 'image/jpeg',
+	webp: 'image/webp',
+	avif: 'image/avif'
+};
 
 function has_query(id: string): boolean {
 	if (id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`)) return true;
@@ -146,7 +154,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, resolutions, fps: fps_cap, version: 3 };
+			const args = { formats, resolutions, fps: fps_cap, version: 4 };
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
@@ -291,8 +299,30 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 				}
 
 				const poster_height = target_heights[0];
-				const poster_out = path.join(cache_path, 'poster.jpg');
-				tasks.push(encodePoster({ src: src_path, out: poster_out, height: poster_height }));
+				const poster_jpg = path.join(cache_path, 'poster.jpg');
+				const poster_webp = path.join(cache_path, 'poster.webp');
+				const poster_avif = path.join(cache_path, 'poster.avif');
+				const poster_files: CachedPoster = { jpg: poster_jpg };
+
+				tasks.push(encodePoster({ src: src_path, out: poster_jpg, height: poster_height }));
+				tasks.push(
+					encodePosterWebp({ src: src_path, out: poster_webp, height: poster_height })
+						.then(() => {
+							poster_files.webp = poster_webp;
+						})
+						.catch(() => {
+							/* webp encoder not available; skip */
+						})
+				);
+				tasks.push(
+					encodePosterAvif({ src: src_path, out: poster_avif, height: poster_height })
+						.then(() => {
+							poster_files.avif = poster_avif;
+						})
+						.catch(() => {
+							/* avif encoder not available; skip */
+						})
+				);
 
 				try {
 					await Promise.all(tasks);
@@ -302,7 +332,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						height: probed_info.height,
 						duration: probed_info.duration,
 						artifacts: artifact_specs,
-						poster_file: poster_out
+						poster_files
 					};
 					writeMeta(cache_path, meta);
 
@@ -340,18 +370,32 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						width: a.width
 					});
 				}
-				const poster_url = await register_asset.call(
-					this,
-					cached_meta.poster_file,
-					'jpg',
-					cache_key,
-					src_path
-				);
+				const poster: EnhancedVideoPoster = {
+					jpg: await register_asset.call(this, cached_meta.poster_files.jpg, 'jpg', cache_key, src_path)
+				};
+				if (cached_meta.poster_files.webp) {
+					poster.webp = await register_asset.call(
+						this,
+						cached_meta.poster_files.webp,
+						'webp',
+						cache_key,
+						src_path
+					);
+				}
+				if (cached_meta.poster_files.avif) {
+					poster.avif = await register_asset.call(
+						this,
+						cached_meta.poster_files.avif,
+						'avif',
+						cache_key,
+						src_path
+					);
+				}
 				const out_meta: EnhancedVideoMetadata = {
 					width: cached_meta.width,
 					height: cached_meta.height,
 					duration: cached_meta.duration,
-					poster: poster_url,
+					poster,
 					sources
 				};
 				return `export default ${JSON.stringify(out_meta)};`;
@@ -394,7 +438,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 					width: probed_info.width,
 					height: probed_info.height,
 					duration: probed_info.duration,
-					poster: '',
+					poster: { jpg: '' },
 					sources: [
 						{
 							src: source_url,
@@ -417,9 +461,9 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 				height?: number
 			): Promise<string> {
 				const content_type =
-					ext === 'jpg'
-						? POSTER_CONTENT_TYPE
-						: (FORMAT_CONTENT_TYPE[ext as VideoFormat] ?? 'application/octet-stream');
+					POSTER_CONTENT_TYPES[ext] ??
+					FORMAT_CONTENT_TYPE[ext as VideoFormat] ??
+					'application/octet-stream';
 				const suffix = height ? `.${height}p` : '';
 				if (vite_config.command === 'serve') {
 					const dev_id = `${hash}${suffix}.${ext}`;

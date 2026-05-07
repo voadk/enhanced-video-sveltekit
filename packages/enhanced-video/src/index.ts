@@ -6,6 +6,7 @@ import type { EnhancedVideosOptions } from './types.js';
 
 export type {
 	EnhancedVideoMetadata,
+	EnhancedVideoPoster,
 	EnhancedVideoSource,
 	EnhancedVideosOptions,
 	VideoFormat
