@@ -24,8 +24,12 @@ function find_node_modules(cwd: string): string {
 	}
 }
 
-export function getCacheRoot(root: string): string {
-	const dir = path.join(find_node_modules(root), '.cache', 'enhanced-video');
+export function getCacheRoot(root: string, override?: string | null): string {
+	const dir = override
+		? path.isAbsolute(override)
+			? override
+			: path.resolve(root, override)
+		: path.join(find_node_modules(root), '.cache', 'enhanced-video');
 	mkdirSync(dir, { recursive: true });
 	return dir;
 }
@@ -46,8 +50,8 @@ export function getCacheKey(
 	return h.digest('hex');
 }
 
-export function getCacheDir(root: string, key: string): string {
-	const dir = path.join(getCacheRoot(root), key);
+export function getCacheDir(root: string, key: string, override?: string | null): string {
+	const dir = path.join(getCacheRoot(root, override), key);
 	mkdirSync(dir, { recursive: true });
 	return dir;
 }

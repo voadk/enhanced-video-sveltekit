@@ -20,7 +20,7 @@
 	let wrapperEl = $state<HTMLDivElement | undefined>(undefined);
 	let videoEl = $state<HTMLVideoElement | undefined>(undefined);
 	let posterHidden = $state(false);
-	let loaded = $state(loading !== 'lazy');
+	let loaded = $state(false);
 
 	function reveal() {
 		posterHidden = true;
@@ -110,7 +110,7 @@
 	>
 		{#if loaded}
 			{#each metadata.sources as source (source.src)}
-				<source src={source.src} type={source.type} />
+				<source src={source.src} type={source.type} size={source.height} />
 			{/each}
 		{/if}
 	</video>

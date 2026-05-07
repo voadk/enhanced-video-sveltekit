@@ -1,8 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
-import pLimit from 'p-limit';
+import pLimit, { type LimitFunction } from 'p-limit';
 
-const limiter = pLimit(Math.max(1, os.cpus().length));
+let limiter: LimitFunction = pLimit(Math.max(1, os.cpus().length - 1));
+
+export function configureConcurrency(maxJobs: number): void {
+	const n = Math.max(1, Math.floor(maxJobs));
+	limiter = pLimit(n);
+}
 
 let ffmpeg_banner_cache: string | null = null;
 
@@ -41,6 +46,7 @@ export interface ProbeResult {
 	width: number;
 	height: number;
 	duration: number;
+	fps: number;
 	has_audio: boolean;
 }
 
@@ -50,10 +56,19 @@ interface FfprobeOutput {
 		width?: number;
 		height?: number;
 		duration?: string | number;
+		r_frame_rate?: string;
+		avg_frame_rate?: string;
 	}>;
 	format?: {
 		duration?: string | number;
 	};
+}
+
+function parse_fps(rate: string | undefined): number {
+	if (!rate) return 0;
+	const [num, den] = rate.split('/').map(Number);
+	if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return 0;
+	return num / den;
 }
 
 export async function probe(src_path: string): Promise<ProbeResult> {
@@ -79,29 +94,41 @@ export async function probe(src_path: string): Promise<ProbeResult> {
 	const width = Number(video.width);
 	const height = Number(video.height);
 	const duration = Number(data.format?.duration ?? video.duration ?? 0);
+	const fps = parse_fps(video.r_frame_rate) || parse_fps(video.avg_frame_rate) || 30;
 	if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
 		throw new Error(`enhanced-video: could not read dimensions of ${src_path}`);
 	}
-	return { width, height, duration, has_audio: !!audio };
+	return { width, height, duration, fps, has_audio: !!audio };
 }
 
 interface EncodeOpts {
 	src: string;
 	out: string;
 	has_audio: boolean;
-	width?: number;
+	/** Target output height in px (preserves aspect ratio, even-rounded width). */
+	height?: number;
+	/** FPS cap. */
+	fps?: number;
 	onProgress?: (outTimeUs: number) => void;
+}
+
+function build_vf(height: number | undefined): string | null {
+	if (!height) return null;
+	return `scale=-2:${height}`;
 }
 
 export function encodeAv1Webm({
 	src,
 	out,
 	has_audio,
-	width,
+	height,
+	fps,
 	onProgress
 }: EncodeOpts): Promise<void> {
 	const args = ['-i', src];
-	if (width) args.push('-vf', `scale=${width}:-2`);
+	const vf = build_vf(height);
+	if (vf) args.push('-vf', vf);
+	if (fps) args.push('-r', String(fps));
 	args.push(
 		'-c:v',
 		'libsvtav1',
@@ -124,11 +151,14 @@ export function encodeH264Mp4({
 	src,
 	out,
 	has_audio,
-	width,
+	height,
+	fps,
 	onProgress
 }: EncodeOpts): Promise<void> {
 	const args = ['-i', src];
-	if (width) args.push('-vf', `scale=${width}:-2`);
+	const vf = build_vf(height);
+	if (vf) args.push('-vf', vf);
+	if (fps) args.push('-r', String(fps));
 	args.push(
 		'-c:v',
 		'libx264',
@@ -150,13 +180,13 @@ export function encodeH264Mp4({
 export function encodePoster({
 	src,
 	out,
-	width
+	height
 }: {
 	src: string;
 	out: string;
-	width?: number;
+	height?: number;
 }): Promise<void> {
-	const filter = width ? `select=eq(n\\,0),scale=${width}:-2` : 'select=eq(n\\,0)';
+	const filter = height ? `select=eq(n\\,0),scale=-2:${height}` : 'select=eq(n\\,0)';
 	return run_ffmpeg(['-i', src, '-vf', filter, '-frames:v', '1', '-q:v', '3', out]);
 }
 

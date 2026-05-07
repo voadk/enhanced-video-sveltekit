@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Plugin, ResolvedConfig, Rollup } from 'vite';
 import {
 	assertFfmpeg,
+	configureConcurrency,
 	encodeAv1Webm,
 	encodeH264Mp4,
 	encodePoster,
@@ -13,24 +14,34 @@ import { progress } from './progress.js';
 import type {
 	CachedArtifact,
 	CachedMeta,
-	Codec,
 	EnhancedVideoMetadata,
-	EnhancedVideoSource
+	EnhancedVideoSource,
+	EnhancedVideosOptions,
+	VideoFormat
 } from './types.js';
 
 const QUERY = 'enhanced-video';
 const BASE_PATH = '/@enhanced-video/';
 
-const CONTENT_TYPES: Record<string, string> = {
-	webm: 'video/webm',
-	mp4: 'video/mp4',
-	jpg: 'image/jpeg'
+const DEFAULT_FORMATS: VideoFormat[] = ['mp4', 'webm'];
+const DEFAULT_RESOLUTIONS = [1080, 720, 480];
+
+const FORMAT_EXT: Record<VideoFormat, string> = {
+	mp4: 'mp4',
+	webm: 'webm'
 };
 
-const SOURCE_TYPES: Record<string, string> = {
-	webm: 'video/webm; codecs=av01.0.04M.08',
-	mp4: 'video/mp4; codecs=avc1.42E01E,mp4a.40.2'
+const FORMAT_CONTENT_TYPE: Record<VideoFormat, string> = {
+	mp4: 'video/mp4',
+	webm: 'video/webm'
 };
+
+const FORMAT_SOURCE_TYPE: Record<VideoFormat, string> = {
+	mp4: 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
+	webm: 'video/webm; codecs="av01.0.04M.08"'
+};
+
+const POSTER_CONTENT_TYPE = 'image/jpeg';
 
 function has_query(id: string): boolean {
 	return id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`);
@@ -41,12 +52,26 @@ function parse_id(id: string): { pathname: string; params: URLSearchParams } {
 	return { pathname, params: new URLSearchParams(search) };
 }
 
+function aspect_width(srcWidth: number, srcHeight: number, height: number): number {
+	return Math.round((srcWidth * height) / srcHeight / 2) * 2;
+}
+
+function unique_sorted_desc(values: number[]): number[] {
+	return Array.from(new Set(values)).sort((a, b) => b - a);
+}
+
 interface AssetEntry {
 	path: string;
 	contentType: string;
 }
 
-export function loader_plugin(): Plugin {
+export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
+	const formats = options.formats ?? DEFAULT_FORMATS;
+	const resolutions = unique_sorted_desc(options.resolutions ?? DEFAULT_RESOLUTIONS);
+	const fps_cap = options.fps ?? null;
+	const cache_dir_option = options.cacheDirectory ?? null;
+	const max_jobs = options.maxJobs ?? null;
+
 	let vite_config: ResolvedConfig;
 	const generated_assets = new Map<string, AssetEntry>();
 	const source_to_ids = new Map<string, Set<string>>();
@@ -59,6 +84,7 @@ export function loader_plugin(): Plugin {
 		configResolved(config) {
 			vite_config = config;
 			assertFfmpeg();
+			if (max_jobs !== null) configureConcurrency(max_jobs);
 		},
 
 		resolveId(id) {
@@ -69,88 +95,106 @@ export function loader_plugin(): Plugin {
 		async load(id) {
 			if (!has_query(id)) return null;
 
-			const { pathname, params } = parse_id(id);
+			const { pathname } = parse_id(id);
 			if (!existsSync(pathname)) {
 				throw new Error(`enhanced-video: source file not found: ${pathname}`);
 			}
 
-			const formats_param = params.get('formats');
-			const formats = (formats_param ? formats_param.split(',') : ['av1', 'h264']) as Codec[];
-			const width_param = params.get('width');
-			const width_override = width_param ? parseInt(width_param, 10) : null;
-
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, width: width_override, version: 1 };
+			const args = { formats, resolutions, fps: fps_cap, version: 2 };
 			const key = getCacheKey(source_bytes, args, banner);
-			const cache_dir = getCacheDir(vite_config.root, key);
+			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
 			const cached = readMeta(cache_dir);
 			let meta: CachedMeta;
 			if (cached) {
 				if (!logged_cache_hits.has(id)) {
 					logged_cache_hits.add(id);
+					const formats_seen = unique_sorted_desc(
+						cached.artifacts.map((a) => a.height)
+					).join('p,');
 					progress.logCacheHit(
 						path.basename(pathname),
-						cached.artifacts.map((a) => a.format)
+						[...new Set(cached.artifacts.map((a) => a.format)), `${formats_seen}p`]
 					);
 				}
 				meta = cached;
 			} else {
 				const probed = await probe(pathname);
-				const target_width = width_override ?? probed.width;
-				const target_height = width_override
-					? Math.round((probed.height * width_override) / probed.width / 2) * 2
-					: probed.height;
+
+				const target_heights = resolutions.filter((h) => h <= probed.height);
+				if (target_heights.length === 0) target_heights.push(probed.height);
+
+				const effective_fps =
+					fps_cap !== null && fps_cap > 0 ? Math.min(fps_cap, probed.fps) : null;
 
 				const tasks: Array<Promise<void>> = [];
 				const artifact_specs: CachedArtifact[] = [];
-				const tracked_formats: string[] = [];
-
-				if (formats.includes('av1')) tracked_formats.push('av1');
-				if (formats.includes('h264')) tracked_formats.push('h264');
+				const tracked_formats = formats.map((f) => f);
 
 				const job_label = path.basename(pathname);
 				const duration_us = Math.max(1, Math.round(probed.duration * 1_000_000));
 				progress.start(id, job_label, duration_us, tracked_formats);
 
-				try {
-					if (formats.includes('av1')) {
-						const out = path.join(cache_dir, 'video.webm');
-						tasks.push(
-							encodeAv1Webm({
-								src: pathname,
-								out,
-								has_audio: probed.has_audio,
-								width: width_override ?? undefined,
-								onProgress: (us) => progress.update(id, 'av1', us)
-							})
-						);
-						artifact_specs.push({ format: 'webm', file: out });
-					}
-					if (formats.includes('h264')) {
-						const out = path.join(cache_dir, 'video.mp4');
-						tasks.push(
-							encodeH264Mp4({
-								src: pathname,
-								out,
-								has_audio: probed.has_audio,
-								width: width_override ?? undefined,
-								onProgress: (us) => progress.update(id, 'h264', us)
-							})
-						);
-						artifact_specs.push({ format: 'mp4', file: out });
-					}
-					const poster_out = path.join(cache_dir, 'poster.jpg');
-					tasks.push(
-						encodePoster({ src: pathname, out: poster_out, width: width_override ?? undefined })
+				const progress_max: Record<string, number> = {};
+				const progress_current: Record<string, number> = {};
+				for (const f of tracked_formats) {
+					progress_max[f] = duration_us * target_heights.length;
+					progress_current[f] = 0;
+				}
+				const updateProgress = (fmt: VideoFormat, deltaUs: number) => {
+					progress_current[fmt] = Math.min(
+						progress_max[fmt],
+						progress_current[fmt] + deltaUs
 					);
+					progress.update(id, fmt, progress_current[fmt]);
+				};
+
+				try {
+					for (const fmt of formats) {
+						let last_time = 0;
+						for (const out_height of target_heights) {
+							const out_width = aspect_width(probed.width, probed.height, out_height);
+							const ext = FORMAT_EXT[fmt];
+							const out = path.join(cache_dir, `video_${out_height}p.${ext}`);
+
+							const onProgress = (us: number) => {
+								const delta = Math.max(0, us - last_time);
+								last_time = us;
+								updateProgress(fmt, delta);
+							};
+
+							const opts = {
+								src: pathname,
+								out,
+								has_audio: probed.has_audio,
+								height: out_height,
+								fps: effective_fps ?? undefined,
+								onProgress
+							};
+
+							if (fmt === 'mp4') tasks.push(encodeH264Mp4(opts));
+							else if (fmt === 'webm') tasks.push(encodeAv1Webm(opts));
+
+							artifact_specs.push({
+								format: fmt,
+								height: out_height,
+								width: out_width,
+								file: out
+							});
+						}
+					}
+
+					const poster_height = target_heights[0];
+					const poster_out = path.join(cache_dir, 'poster.jpg');
+					tasks.push(encodePoster({ src: pathname, out: poster_out, height: poster_height }));
 
 					await Promise.all(tasks);
 
 					meta = {
-						width: target_width,
-						height: target_height,
+						width: probed.width,
+						height: probed.height,
 						duration: probed.duration,
 						artifacts: artifact_specs,
 						poster_file: poster_out
@@ -159,8 +203,9 @@ export function loader_plugin(): Plugin {
 
 					const sizes: Record<string, number> = {};
 					for (const a of artifact_specs) {
+						const k = `${a.format}_${a.height}p`;
 						try {
-							sizes[a.format] = statSync(a.file).size;
+							sizes[k] = statSync(a.file).size;
 						} catch {
 							/* ignore */
 						}
@@ -174,11 +219,14 @@ export function loader_plugin(): Plugin {
 
 			const sources: EnhancedVideoSource[] = [];
 			for (const a of meta.artifacts) {
-				const url = await register_asset.call(this, a.file, a.format, key, pathname);
+				const ext = FORMAT_EXT[a.format];
+				const url = await register_asset.call(this, a.file, ext, key, pathname, a.height);
 				sources.push({
 					src: url,
-					type: SOURCE_TYPES[a.format] ?? CONTENT_TYPES[a.format] ?? 'application/octet-stream',
-					format: a.format
+					type: FORMAT_SOURCE_TYPE[a.format] ?? FORMAT_CONTENT_TYPE[a.format],
+					format: a.format,
+					height: a.height,
+					width: a.width
 				});
 			}
 			const poster_url = await register_asset.call(this, meta.poster_file, 'jpg', key, pathname);
@@ -200,18 +248,23 @@ export function loader_plugin(): Plugin {
 				file: string,
 				ext: string,
 				hash: string,
-				original: string
+				original: string,
+				height?: number
 			): Promise<string> {
-				const content_type = CONTENT_TYPES[ext] ?? 'application/octet-stream';
+				const content_type =
+					ext === 'jpg'
+						? POSTER_CONTENT_TYPE
+						: (FORMAT_CONTENT_TYPE[ext as VideoFormat] ?? 'application/octet-stream');
+				const suffix = height ? `.${height}p` : '';
 				if (vite_config.command === 'serve') {
-					const dev_id = `${hash}.${ext}`;
+					const dev_id = `${hash}${suffix}.${ext}`;
 					generated_assets.set(dev_id, { path: file, contentType: content_type });
 					return BASE_PATH + dev_id;
 				}
 				const handle = this.emitFile({
 					type: 'asset',
 					source: readFileSync(file),
-					name: `enhanced-video-${hash.slice(0, 8)}.${ext}`,
+					name: `enhanced-video-${hash.slice(0, 8)}${suffix}.${ext}`,
 					originalFileName: path.relative(vite_config.root, original)
 				});
 				return `__VITE_ASSET__${handle}__`;
