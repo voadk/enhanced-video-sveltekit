@@ -5,6 +5,12 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.3.0] - 2026-05-07
+
+### Features
+
+- Background dev encoding + HMR reload + lock files (d99e6fc)
+
 ## [0.2.0] - 2026-05-07
 
 ### Features
