@@ -5,6 +5,12 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.2.0] - 2026-05-07
+
+### Features
+
+- Add VP9 (webm) and HEVC (mp4_hevc) encoders (987b3c2)
+
 ## [0.1.0] - 2026-05-07
 
 ### CI
