@@ -50,10 +50,14 @@ There's a GitHub Actions workflow at [`.github/workflows/publish.yml`](.github/w
 ### To release
 
 1. Bump the version in `packages/enhanced-video/package.json`.
-2. Add an entry in `packages/enhanced-video/CHANGELOG.md`.
-3. Commit + push to `main`.
+2. Commit + push to `main` (use [Conventional Commit](https://www.conventionalcommits.org/) prefixes for everything that's gone in since the last tag — `feat:`, `fix:`, `ci:`, `chore:`, etc.).
 
-The workflow runs `tsc` + `npm pack --dry-run` on every push and PR. On a push to `main`, if the `package.json` version isn't already on npm, it publishes (with `prepublishOnly` doing a clean rebuild) and pushes a `vX.Y.Z` git tag. Pushes to `main` without a version bump are ignored — same package, same release.
+That's it. The workflow handles the rest:
+
+1. `tsc` + `npm pack --dry-run` on every push and PR.
+2. On push to `main` with a new version: `npm publish` with provenance, then [`git-cliff`](https://git-cliff.org/) regenerates `packages/enhanced-video/CHANGELOG.md` from commits since the previous tag, commits it back as `chore(changelog): release vX.Y.Z [skip ci]`, pushes a `vX.Y.Z` git tag, and creates a GitHub Release with the same notes.
+
+The CHANGELOG groups commits by Conventional type (`feat:` → Features, `fix:` → Bug Fixes, `ci:` → CI, etc.). Non-Conventional commits are skipped. Configuration lives in [`cliff.toml`](cliff.toml). Pushes to `main` without a version bump don't release — same package, same release.
 
 ### Manual fallback
 

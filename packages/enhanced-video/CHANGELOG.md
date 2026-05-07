@@ -1,16 +1,23 @@
 # Changelog
 
-## 0.0.1
+All notable changes to `enhanced-video-sveltekit` are documented in this file.
 
-Initial release.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
+generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
-- `<enhanced:video>` markup tag, processed at build time
-- AV1 (`.webm`) + H.264 (`.mp4`) output via ffmpeg
-- Poster JPEG extracted from the first frame
-- `<EnhancedVideo>` Svelte 5 runtime with poster overlay that fades on playback start
-- Lazy loading via IntersectionObserver, opt-out with `loading="eager"`
-- On-disk content-hash cache at `node_modules/.cache/enhanced-video/`
-- Terminal progress bar (TTY) / start-done logs (CI)
-- Dev mode middleware with HTTP range support
-- Build mode emits content-hashed assets via `this.emitFile()`
-- HMR invalidation when source videos change
+## [0.0.1] - 2026-05-07
+
+### CI
+
+- Add npm --provenance flag to publish (344f02b)
+- Remove pnpm version from action-setup, defer to packageManager field (dd4fc7a)
+
+### Chores
+
+- Rename package to enhanced-video-sveltekit and apply preset b1GwReqSu (0d62f4d)
+
+### Features
+
+- Add Tailwind + shadcn-svelte showcase, migrate to TypeScript (2d86e65)
+
+
