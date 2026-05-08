@@ -5,6 +5,16 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.9.0] - 2026-05-08
+
+### Bug Fixes
+
+- Use sharp for JPG/WebP/AVIF conversion (d53fccc)
+
+### Features
+
+- Add quality profiles and encoder configuration (a67e87e)
+
 ## [0.8.0] - 2026-05-07
 
 ### Features
