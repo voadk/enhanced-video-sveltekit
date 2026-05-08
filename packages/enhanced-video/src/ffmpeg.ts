@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import pLimit, { type LimitFunction } from 'p-limit';
-import type { HwAccel } from './types.js';
+import type { HwAccel, QualityProfile } from './types.js';
 
 let limiter: LimitFunction = pLimit(Math.max(1, os.cpus().length - 1));
 
@@ -235,6 +235,7 @@ interface EncodeOpts {
 	src: string;
 	out: string;
 	has_audio: boolean;
+	profile: QualityProfile;
 	/** Target output height in px (preserves aspect ratio, even-rounded width). */
 	height?: number;
 	/** FPS cap. */
@@ -244,42 +245,43 @@ interface EncodeOpts {
 	onProgress?: (outTimeUs: number) => void;
 }
 
-function push_h264_quality(args: string[], encoder: EncoderEntry): void {
-	switch (encoder.accel) {
-		case 'sw':
-			args.push('-crf', '23', '-preset', 'medium', '-pix_fmt', 'yuv420p');
-			break;
-		case 'videotoolbox':
-			args.push('-q:v', '55', '-pix_fmt', 'yuv420p');
-			break;
-		case 'nvenc':
-			args.push('-rc', 'vbr', '-cq', '23', '-preset', 'p4', '-pix_fmt', 'yuv420p');
-			break;
-		case 'qsv':
-			args.push('-global_quality', '23', '-preset', 'medium', '-pix_fmt', 'nv12');
-			break;
-		case 'vaapi':
-			args.push('-qp', '23');
-			break;
-	}
+const NVENC_PRESET_MAP: Record<string, string> = {
+	ultrafast: 'p1',
+	superfast: 'p1',
+	veryfast: 'p2',
+	faster: 'p2',
+	fast: 'p3',
+	medium: 'p4',
+	slow: 'p5',
+	slower: 'p6',
+	veryslow: 'p7'
+};
+
+function map_nvenc_preset(preset: string): string {
+	return NVENC_PRESET_MAP[preset] ?? 'p4';
 }
 
-function push_hevc_quality(args: string[], encoder: EncoderEntry): void {
+function push_codec_quality(
+	args: string[],
+	encoder: EncoderEntry,
+	settings: { crf: number; preset: string }
+): void {
+	const { crf, preset } = settings;
 	switch (encoder.accel) {
 		case 'sw':
-			args.push('-crf', '28', '-preset', 'medium', '-pix_fmt', 'yuv420p');
+			args.push('-crf', String(crf), '-preset', preset, '-pix_fmt', 'yuv420p');
 			break;
 		case 'videotoolbox':
-			args.push('-q:v', '60', '-pix_fmt', 'yuv420p');
+			args.push('-q:v', String(crf + 32), '-pix_fmt', 'yuv420p');
 			break;
 		case 'nvenc':
-			args.push('-rc', 'vbr', '-cq', '28', '-preset', 'p4', '-pix_fmt', 'yuv420p');
+			args.push('-rc', 'vbr', '-cq', String(crf), '-preset', map_nvenc_preset(preset), '-pix_fmt', 'yuv420p');
 			break;
 		case 'qsv':
-			args.push('-global_quality', '28', '-preset', 'medium', '-pix_fmt', 'nv12');
+			args.push('-global_quality', String(crf), '-preset', preset, '-pix_fmt', 'nv12');
 			break;
 		case 'vaapi':
-			args.push('-qp', '28');
+			args.push('-qp', String(crf));
 			break;
 	}
 }
@@ -295,6 +297,7 @@ export function encodeAv1Webm({
 	has_audio,
 	height,
 	fps,
+	profile,
 	onProgress
 }: EncodeOpts): Promise<void> {
 	const args = ['-i', src];
@@ -305,15 +308,15 @@ export function encodeAv1Webm({
 		'-c:v',
 		'libsvtav1',
 		'-crf',
-		'30',
+		String(profile.av1.crf),
 		'-preset',
-		'8',
+		String(profile.av1.preset),
 		'-g',
 		'240',
 		'-svtav1-params',
 		'log-level=3'
 	);
-	if (has_audio) args.push('-c:a', 'libopus', '-b:a', '96k');
+	if (has_audio) args.push('-c:a', 'libopus', '-b:a', profile.audio.webmBitrate);
 	else args.push('-an');
 	args.push('-f', 'webm', out);
 	return run_ffmpeg(args, onProgress);
@@ -325,6 +328,7 @@ export function encodeVp9Webm({
 	has_audio,
 	height,
 	fps,
+	profile,
 	onProgress
 }: EncodeOpts): Promise<void> {
 	const args = ['-i', src];
@@ -335,7 +339,7 @@ export function encodeVp9Webm({
 		'-c:v',
 		'libvpx-vp9',
 		'-crf',
-		'32',
+		String(profile.vp9.crf),
 		'-b:v',
 		'0',
 		'-pix_fmt',
@@ -345,9 +349,9 @@ export function encodeVp9Webm({
 		'-deadline',
 		'good',
 		'-cpu-used',
-		'2'
+		String(profile.vp9.cpuUsed)
 	);
-	if (has_audio) args.push('-c:a', 'libopus', '-b:a', '96k');
+	if (has_audio) args.push('-c:a', 'libopus', '-b:a', profile.audio.webmBitrate);
 	else args.push('-an');
 	args.push('-f', 'webm', out);
 	return run_ffmpeg(args, onProgress);
@@ -359,6 +363,7 @@ export function encodeH264Mp4({
 	has_audio,
 	height,
 	fps,
+	profile,
 	hwAccel = false,
 	onProgress
 }: EncodeOpts): Promise<void> {
@@ -368,9 +373,9 @@ export function encodeH264Mp4({
 	if (vf) args.push('-vf', vf);
 	if (fps) args.push('-r', String(fps));
 	args.push('-c:v', encoder.name);
-	push_h264_quality(args, encoder);
+	push_codec_quality(args, encoder, profile.h264);
 	args.push('-movflags', '+faststart');
-	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
+	if (has_audio) args.push('-c:a', 'aac', '-b:a', profile.audio.mp4Bitrate);
 	else args.push('-an');
 	args.push('-f', 'mp4', out);
 	return run_ffmpeg(args, onProgress);
@@ -382,6 +387,7 @@ export function encodeH265Mp4({
 	has_audio,
 	height,
 	fps,
+	profile,
 	hwAccel = false,
 	onProgress
 }: EncodeOpts): Promise<void> {
@@ -391,10 +397,10 @@ export function encodeH265Mp4({
 	if (vf) args.push('-vf', vf);
 	if (fps) args.push('-r', String(fps));
 	args.push('-c:v', encoder.name);
-	push_hevc_quality(args, encoder);
+	push_codec_quality(args, encoder, profile.hevc);
 	args.push('-tag:v', 'hvc1', '-movflags', '+faststart');
 	if (encoder.name === 'libx265') args.push('-x265-params', 'log-level=error');
-	if (has_audio) args.push('-c:a', 'aac', '-b:a', '128k');
+	if (has_audio) args.push('-c:a', 'aac', '-b:a', profile.audio.mp4Bitrate);
 	else args.push('-an');
 	args.push('-f', 'mp4', out);
 	return run_ffmpeg(args, onProgress);

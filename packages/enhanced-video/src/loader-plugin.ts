@@ -23,6 +23,7 @@ import {
 	writeMeta
 } from './cache.js';
 import { progress } from './progress.js';
+import { QUALITY_VALUES, resolveProfile } from './quality.js';
 import type {
 	CachedArtifact,
 	CachedMeta,
@@ -31,16 +32,29 @@ import type {
 	EnhancedVideoPoster,
 	EnhancedVideoSource,
 	EnhancedVideosOptions,
+	HwAccel,
+	Quality,
 	VideoFormat
 } from './types.js';
 
 const QUERY = 'enhanced-video';
-const QUERY_COMPAT = 'enhanced';
 const BASE_PATH = '/@enhanced-video/';
 
 const DEFAULT_FORMATS: VideoFormat[] = ['mp4', 'webm'];
 const DEFAULT_RESOLUTIONS = [1080, 720, 480];
+const DEFAULT_QUALITY: Quality = 'balanced';
+const DEFAULT_HW_ACCEL: HwAccel = 'auto';
 const DEFAULT_LOCK_MAX_AGE_MS = 7200000;
+
+const VALID_FORMATS: ReadonlyArray<VideoFormat> = ['mp4', 'webm', 'mp4_hevc', 'av1'];
+const VALID_HW_ACCEL: ReadonlyArray<HwAccel> = [
+	'auto',
+	'videotoolbox',
+	'nvenc',
+	'vaapi',
+	'qsv',
+	false
+];
 
 const FORMAT_EXT: Record<VideoFormat, string> = {
 	mp4: 'mp4',
@@ -80,14 +94,7 @@ const POSTER_CONTENT_TYPES: Record<string, string> = {
 };
 
 function has_query(id: string): boolean {
-	if (id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`)) return true;
-	const m = id.match(/[?&]enhanced(?:&|$|=)/);
-	return m !== null;
-}
-
-function is_compat_query(id: string): boolean {
-	if (id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`)) return false;
-	return /[?&]enhanced(?:&|$|=)/.test(id);
+	return id.includes(`?${QUERY}`) || id.includes(`&${QUERY}`);
 }
 
 function parse_id(id: string): { pathname: string; params: URLSearchParams } {
@@ -103,19 +110,119 @@ function unique_sorted_desc(values: number[]): number[] {
 	return Array.from(new Set(values)).sort((a, b) => b - a);
 }
 
+/** Pick output heights for a given source: drop heights taller than the source,
+ *  and dedupe heights that are within 10% of an already-selected larger one. */
+function select_target_heights(resolutions: number[], src_height: number): number[] {
+	const sorted = unique_sorted_desc(resolutions);
+	const result: number[] = [];
+	for (const h of sorted) {
+		if (h > src_height) continue;
+		if (result.length > 0 && h > result[result.length - 1] * 0.9) continue;
+		result.push(h);
+	}
+	if (result.length === 0) result.push(src_height);
+	return result;
+}
+
+function suggest_format(unknown: string): VideoFormat | null {
+	const lower = String(unknown).toLowerCase().replace(/[._-]/g, '');
+	const aliases: Record<string, VideoFormat> = {
+		h265: 'mp4_hevc',
+		hevc: 'mp4_hevc',
+		x265: 'mp4_hevc',
+		mp4hevc: 'mp4_hevc',
+		h264: 'mp4',
+		x264: 'mp4',
+		avc: 'mp4',
+		mp4h264: 'mp4',
+		vp9: 'webm',
+		vp8: 'webm',
+		av01: 'av1',
+		aom: 'av1'
+	};
+	if (aliases[lower]) return aliases[lower];
+	for (const v of VALID_FORMATS) {
+		if (lower === v.replace('_', '')) return v;
+	}
+	return null;
+}
+
+function format_list<T>(values: ReadonlyArray<T>, quote = true): string {
+	return values
+		.map((v) => (quote && typeof v === 'string' ? `'${v}'` : String(v)))
+		.join(', ');
+}
+
+function validate_options(opts: EnhancedVideosOptions): void {
+	if (opts.formats !== undefined) {
+		if (!Array.isArray(opts.formats) || opts.formats.length === 0) {
+			throw new Error("enhanced-video: 'formats' must be a non-empty array.");
+		}
+		for (const f of opts.formats) {
+			if (!VALID_FORMATS.includes(f as VideoFormat)) {
+				const sug = suggest_format(String(f));
+				throw new Error(
+					`enhanced-video: unknown format '${String(f)}'.` +
+						(sug ? ` Did you mean '${sug}'?` : '') +
+						` Valid: ${format_list(VALID_FORMATS)}.`
+				);
+			}
+		}
+	}
+
+	if (opts.resolutions !== undefined) {
+		if (!Array.isArray(opts.resolutions) || opts.resolutions.length === 0) {
+			throw new Error("enhanced-video: 'resolutions' must be a non-empty array of positive integers.");
+		}
+		for (const h of opts.resolutions) {
+			if (!Number.isInteger(h) || (h as number) <= 0) {
+				throw new Error(`enhanced-video: 'resolutions' must contain positive integers, got ${String(h)}.`);
+			}
+		}
+	}
+
+	if (opts.quality !== undefined && !QUALITY_VALUES.includes(opts.quality)) {
+		throw new Error(
+			`enhanced-video: invalid quality '${String(opts.quality)}'. Valid: ${format_list(QUALITY_VALUES)}.`
+		);
+	}
+
+	if (opts.maxJobs !== undefined && (!Number.isFinite(opts.maxJobs) || opts.maxJobs < 1)) {
+		throw new Error(`enhanced-video: 'maxJobs' must be a positive number, got ${String(opts.maxJobs)}.`);
+	}
+
+	if (opts.advanced) {
+		const { hwAccel, fps } = opts.advanced;
+		if (hwAccel !== undefined && !VALID_HW_ACCEL.includes(hwAccel as HwAccel)) {
+			const valid = VALID_HW_ACCEL.map((v) => (v === false ? 'false' : `'${v}'`)).join(', ');
+			throw new Error(
+				`enhanced-video: invalid advanced.hwAccel '${String(hwAccel)}'. Valid: ${valid}.`
+			);
+		}
+		if (fps !== undefined && (!Number.isFinite(fps) || fps <= 0)) {
+			throw new Error(`enhanced-video: 'advanced.fps' must be a positive number, got ${String(fps)}.`);
+		}
+	}
+}
+
 interface AssetEntry {
 	path: string;
 	contentType: string;
 }
 
 export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
+	validate_options(options);
+
 	const formats = options.formats ?? DEFAULT_FORMATS;
 	const resolutions = unique_sorted_desc(options.resolutions ?? DEFAULT_RESOLUTIONS);
-	const fps_cap = options.fps ?? null;
+	const quality = options.quality ?? DEFAULT_QUALITY;
+	const profile = resolveProfile(quality, options.advanced?.overrides);
 	const cache_dir_option = options.cacheDirectory ?? null;
 	const max_jobs = options.maxJobs ?? null;
-	const lock_max_age_ms = options.lockMaxAgeMs ?? DEFAULT_LOCK_MAX_AGE_MS;
-	const hw_accel = options.hwAccel ?? false;
+	const advanced = options.advanced ?? {};
+	const fps_cap = advanced.fps ?? null;
+	const lock_max_age_ms = advanced.lockMaxAgeMs ?? DEFAULT_LOCK_MAX_AGE_MS;
+	const hw_accel: HwAccel = advanced.hwAccel ?? DEFAULT_HW_ACCEL;
 
 	let vite_config: ResolvedConfig;
 	let dev_server: ViteDevServer | null = null;
@@ -131,8 +238,8 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 		configResolved(config) {
 			vite_config = config;
 			configureBinaries({
-				ffmpegPath: options.ffmpegPath,
-				ffprobePath: options.ffprobePath
+				ffmpegPath: advanced.ffmpegPath,
+				ffprobePath: advanced.ffprobePath
 			});
 			assertFfmpeg();
 			if (max_jobs !== null) configureConcurrency(max_jobs);
@@ -153,13 +260,18 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 
 			const banner = assertFfmpeg();
 			const source_bytes = readFileSync(pathname);
-			const args = { formats, resolutions, fps: fps_cap, hwAccel: hw_accel, version: 6 };
+			const args = {
+				formats,
+				resolutions,
+				fps: fps_cap,
+				hwAccel: hw_accel,
+				profile,
+				version: 7
+			};
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);
 
 			track_source(source_to_ids, pathname, id);
-
-			const compat = is_compat_query(id);
 
 			const cached = readMeta(cache_dir);
 			if (cached) {
@@ -171,9 +283,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						heights.map((h) => `${h}p`).join(',')
 					]);
 				}
-				return compat
-					? emit_compat_module.call(this, cached, key, pathname)
-					: emit_module.call(this, cached, key, pathname);
+				return emit_module.call(this, cached, key, pathname);
 			}
 
 			const probed = await probe(pathname);
@@ -186,9 +296,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 			await encode_all(id, pathname, probed, cache_dir);
 			const meta = readMeta(cache_dir);
 			if (!meta) throw new Error(`enhanced-video: encode succeeded but meta missing for ${pathname}`);
-			return compat
-				? emit_compat_module.call(this, meta, key, pathname)
-				: emit_module.call(this, meta, key, pathname);
+			return emit_module.call(this, meta, key, pathname);
 
 			function kick_background_encode(
 				module_id: string,
@@ -233,8 +341,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 				probed_info: ProbeResult,
 				cache_path: string
 			): Promise<void> {
-				const target_heights = resolutions.filter((h) => h <= probed_info.height);
-				if (target_heights.length === 0) target_heights.push(probed_info.height);
+				const target_heights = select_target_heights(resolutions, probed_info.height);
 
 				const effective_fps =
 					fps_cap !== null && fps_cap > 0 ? Math.min(fps_cap, probed_info.fps) : null;
@@ -280,6 +387,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 							has_audio: probed_info.has_audio,
 							height: out_height,
 							fps: effective_fps ?? undefined,
+							profile,
 							onProgress
 						};
 
@@ -310,6 +418,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 						jpgOut: poster_jpg,
 						webpOut: poster_webp,
 						avifOut: poster_avif,
+						poster: profile.poster,
 						height: poster_height
 					}).then((out) => {
 						poster_files.webp = out.webp;
@@ -392,27 +501,6 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 					sources
 				};
 				return `export default ${JSON.stringify(out_meta)};`;
-			}
-
-			async function emit_compat_module(
-				this: Rollup.PluginContext,
-				cached_meta: CachedMeta,
-				cache_key: string,
-				src_path: string
-			): Promise<string> {
-				const out: Record<string, Record<string, string>> = {
-					mp4: {},
-					webm: {},
-					mp4_hevc: {},
-					av1: {}
-				};
-				for (const a of cached_meta.artifacts) {
-					const ext = FORMAT_EXT[a.format];
-					const url = await register_asset.call(this, a.file, ext, cache_key, src_path, a.height);
-					if (!out[a.format]) out[a.format] = {};
-					out[a.format][`${a.height}p`] = url;
-				}
-				return `export default ${JSON.stringify(out)};`;
 			}
 
 			async function emit_placeholder(

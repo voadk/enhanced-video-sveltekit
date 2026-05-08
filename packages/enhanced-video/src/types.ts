@@ -1,27 +1,51 @@
 export type VideoFormat = 'mp4' | 'webm' | 'mp4_hevc' | 'av1';
 
-export interface EnhancedVideosOptions {
-	/** Output formats. Default: ['mp4', 'webm'] */
-	formats?: VideoFormat[];
-	/** Target output heights in px. Default: [1080, 720, 480]. Only resolutions <= source height are emitted. */
-	resolutions?: number[];
-	/** FPS cap (capped at min(fps, source_fps)). Default: source FPS. */
-	fps?: number;
-	/** Disk cache location. Default: <nearest-node_modules>/.cache/enhanced-video */
-	cacheDirectory?: string;
-	/** Concurrent ffmpeg processes. Default: max(1, cpus - 1). */
-	maxJobs?: number;
-	/** Stale lock cleanup threshold (ms). Locks older than this are treated as orphaned. Default: 7200000 (2h). */
-	lockMaxAgeMs?: number;
-	/** Explicit path to the ffmpeg binary. Overrides static-binary autodetection and PATH. */
-	ffmpegPath?: string;
-	/** Explicit path to the ffprobe binary. Overrides static-binary autodetection and PATH. */
-	ffprobePath?: string;
-	/** Hardware encoder selection for H.264/HEVC. `'auto'` picks the best available; explicit values force a specific accelerator (errors if missing). `false` (default) keeps software-only encoding for output reproducibility. VP9/AV1 always use software regardless. */
-	hwAccel?: HwAccel;
-}
+export type Quality = 'web' | 'balanced' | 'archive';
 
 export type HwAccel = 'auto' | 'videotoolbox' | 'nvenc' | 'vaapi' | 'qsv' | false;
+
+export interface QualityProfile {
+	h264: { crf: number; preset: string };
+	hevc: { crf: number; preset: string };
+	vp9: { crf: number; cpuUsed: number };
+	av1: { crf: number; preset: number };
+	audio: { mp4Bitrate: string; webmBitrate: string };
+	poster: { jpg: number; webp: number; avif: number };
+}
+
+export type QualityOverrides = {
+	[K in keyof QualityProfile]?: Partial<QualityProfile[K]>;
+};
+
+export interface AdvancedOptions {
+	/** Hardware encoder for H.264/HEVC. `'auto'` (default) picks the best available; explicit values force a specific accelerator (errors if missing); `false` forces software encoding. VP9/AV1 always use software. */
+	hwAccel?: HwAccel;
+	/** Output FPS cap (`min(fps, source_fps)`). Default: source FPS, uncapped. */
+	fps?: number;
+	/** Explicit ffmpeg binary path. Overrides static-binary autodetection and PATH. */
+	ffmpegPath?: string;
+	/** Explicit ffprobe binary path. */
+	ffprobePath?: string;
+	/** Stale lock cleanup threshold (ms). Locks older than this are treated as orphaned. Default: 7200000 (2h). */
+	lockMaxAgeMs?: number;
+	/** Per-codec / per-poster-format overrides on top of the chosen `quality` preset. */
+	overrides?: QualityOverrides;
+}
+
+export interface EnhancedVideosOptions {
+	/** Output formats. Default: `['mp4', 'webm']`. */
+	formats?: VideoFormat[];
+	/** Target output heights in px. Default: `[1080, 720, 480]`. Variants taller than the source are skipped automatically. */
+	resolutions?: number[];
+	/** Encoder quality preset. `'web'` favours small files & fast encodes; `'balanced'` (default) is the sweet spot; `'archive'` favours quality. */
+	quality?: Quality;
+	/** Disk cache location. Default: `<nearest-node_modules>/.cache/enhanced-video`. */
+	cacheDirectory?: string;
+	/** Concurrent ffmpeg processes. Default: `max(1, cpus - 1)`. */
+	maxJobs?: number;
+	/** Power-user knobs that the 95% case shouldn't need. */
+	advanced?: AdvancedOptions;
+}
 
 export interface EnhancedVideoSource {
 	src: string;
@@ -76,6 +100,7 @@ export interface EncodeArgs {
 	formats: VideoFormat[];
 	resolutions: number[];
 	fps: number | null;
-	hwAccel: HwAccel | null;
+	hwAccel: HwAccel;
+	profile: QualityProfile;
 	version: number;
 }
