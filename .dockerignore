@@ -1,0 +1,14 @@
+node_modules
+.git
+.github
+.husky
+**/.svelte-kit
+**/build
+**/dist
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.vite
+.cursor
