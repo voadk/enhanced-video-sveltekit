@@ -52,7 +52,7 @@ pnpm --filter enhanced-video-sveltekit build      # one-off rebuild of dist/
 - `src/routes/+page.svelte` — showcase page. shadcn-svelte components + 3 `<enhanced:video>` tags (1 eager hero, 2 lazy).
 - `src/lib/utils.ts` — `cn()` + `WithElementRef` / `WithoutChild` / `WithoutChildren` helpers (required by shadcn-svelte components).
 - `components.json` — shadcn-svelte config: `style: luma`, `iconLibrary: hugeicons`, `typescript: true`. To re-fetch: `pnpm dlx shadcn-svelte add <name> --overwrite`.
-- `src/lib/*.{mp4,mov,webm,...}` — gitignored. Drop your own video files there to use the demo.
+- `src/lib/coverr-*.mp4` — tracked (demo grid + Docker build). Other `*.{mov,m4v,webm,mkv}` and non-coverr `*.mp4` in `src/lib/` stay gitignored for local experiments.
 
 ### Config — repo root
 

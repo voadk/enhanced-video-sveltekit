@@ -9,8 +9,9 @@ dist
 *.log
 .vite
 
-# Demo videos — personal content, not for public repo. Drop your own files into apps/demo/src/lib/ to use the demo locally.
+# Demo videos — ignore ad-hoc drops; committed Coverr showcase clips match +page.svelte (required for Docker/CI).
 apps/demo/src/lib/*.mp4
+!apps/demo/src/lib/coverr-*.mp4
 apps/demo/src/lib/*.mov
 apps/demo/src/lib/*.m4v
 apps/demo/src/lib/*.webm
