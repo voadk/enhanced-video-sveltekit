@@ -1,0 +1,187 @@
+---
+title: enhanced-video-sveltekit
+description: Build-time video pipeline for SvelteKit — multi-format transcodes, auto poster, lazy loading, and a single custom element in your markup.
+updated: '2026-05-16'
+---
+
+<script lang="ts">
+	import Callout from '$lib/mdsvex/Callout.svelte';
+	import DocsInstallSwitcher from '$lib/docs/DocsInstallSwitcher.svelte';
+	import DocsVideoFeature from '$lib/docs/DocsVideoFeature.svelte';
+</script>
+
+<svelte:head>
+	<title>{title} — documentation</title>
+	<meta name="description" content={description} />
+</svelte:head>
+
+## Overview
+
+**enhanced-video-sveltekit** is a pair of Vite plugins (markup transform + virtual module loader) that turn a single custom element in your Svelte files into **encoded video variants**, an **auto-extracted poster** (`jpg` plus optional `webp` / `avif`), and a small **runtime component** that handles lazy loading, optional click-to-play, autoplay discipline, and poster fade tied to real playback.
+
+You write a static tag with a **string literal** `src`; the build probes the file with ffprobe, runs ffmpeg for each selected format and resolution, deduplicates work via a **content-hashed disk cache**, and emits optimized assets. The browser receives `<picture>` for the poster and ordered `<source>` elements so it picks the first format it can play.
+
+<Callout title="npm name" tone="info">
+
+The package on npm is **`enhanced-video-sveltekit`**. Internal names (`?enhanced-video`, `/@enhanced-video/`, cache folder `enhanced-video`) stay short on purpose.
+
+</Callout>
+
+## Requirements
+
+| Requirement | Notes |
+| --- | --- |
+| **Node** | ≥ 18 |
+| **Svelte** | ^5 |
+| **Vite** | ^6.3 or ≥ 7 |
+| **@sveltejs/vite-plugin-svelte** | ^6 or ^7 |
+| **ffmpeg / ffprobe** | On `PATH` at build time, or pass `advanced.ffmpegPath` / `ffprobePath`, or install `ffmpeg-ffprobe-static` |
+
+<Callout title="ffmpeg" tone="warning">
+
+Encoding runs **during dev** (background + HMR) and **synchronously on production build**. Missing ffmpeg or a failed encode **fails the build**. Install a build that includes **libx264**, **libx265** (HEVC), **libvpx-vp9**, and **libsvtav1** (AV1) if you enable those formats.
+
+</Callout>
+
+## Install
+
+<DocsInstallSwitcher />
+
+```bash
+# optional: vendored binaries so CI machines do not need system ffmpeg
+pnpm add -D ffmpeg-ffprobe-static
+```
+
+## Vite setup
+
+Add **`enhancedVideos()`** from `enhanced-video-sveltekit` **before** the SvelteKit (or `vite-plugin-svelte`) plugin so the markup transform runs ahead of compilation. If you use Tailwind’s Vite plugin, keep the order shown in this demo:
+
+```ts
+import tailwindcss from '@tailwindcss/vite';
+import { sveltekit } from '@sveltejs/kit/vite';
+import { enhancedVideos } from 'enhanced-video-sveltekit';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+	plugins: [tailwindcss(), enhancedVideos({ resolutions: [360] }), sveltekit()]
+});
+```
+
+This demo passes **`resolutions: [360]`** so cold encodes stay quick; the default ladder is **`[1080, 720, 480]`** (variants taller than the source are skipped).
+
+## Authoring in Svelte
+
+Use the custom element in any **`.svelte`** file (not in raw `.svx` / markdown — put the tag in a `.svelte` wrapper if you author MDsveX). Standard **`<video>`** attributes pass through (`autoplay`, `muted`, `loop`, `controls`, `playsinline`, `class`, `style`, `preload`, ARIA, events, bindings). A user-supplied **`poster`** attribute is ignored; the pipeline always generates one.
+
+<Callout title="Static `src` only" tone="warning">
+
+`src` **must be a string literal**. Dynamic `src={variable}` is rejected with a clear error — the transform has to resolve the file at build time.
+
+</Callout>
+
+Minimal example (angle brackets escaped here so this docs file can live next to the same transform):
+
+```svelte
+&lt;enhanced:video src="./hero.mp4" autoplay muted loop playsinline />
+```
+
+### Runtime props (beyond `<video>`)
+
+These are handled by the generated **`EnhancedVideo`** wrapper (see `enhanced-video-sveltekit/runtime`):
+
+| Prop | Default | Purpose |
+| --- | --- | --- |
+| `loading` | `lazy` | **`lazy`**: gate `<source>` elements behind **IntersectionObserver** until near the viewport. **`eager`**: load immediately. **`click`**: poster + play control until the user starts playback. |
+| `preload` | `metadata` | Forwarded to the underlying `<video>`. |
+| `autoPause` | `true` | Pause when the block scrolls out of view; resume when it returns. |
+| `respectReducedMotion` | `true` | Suppress autoplay when `prefers-reduced-motion: reduce`. |
+| `playLabel` | `Play video` | Accessible label for the click-to-play control when `loading="click"`. |
+
+## What gets encoded
+
+Default **`formats`** are **`['mp4', 'webm']`**: **H.264 + AAC** in MP4 and **VP9 + Opus** in WebM. You can add **`av1`** and **`mp4_hevc`**. The runtime emits `<source type="…">` in **declaration order** — put the format you want modern browsers to try first (for example AV1 before H.264).
+
+| `formats` value | Container | Typical use |
+| --- | --- | --- |
+| `mp4` | MP4 (H.264 + AAC) | Broad compatibility |
+| `webm` | WebM (VP9 + Opus) | Smaller than MP4 for many clips |
+| `mp4_hevc` | MP4 (H.265 + AAC) | Smaller MP4; Safari-oriented tagging |
+| `av1` | WebM (AV1 + Opus) | Best compression where decode exists |
+
+Posters are extracted to **jpg** (always) plus **webp** / **avif** when encoders allow, behind **`<picture>`** for efficient delivery.
+
+## `enhancedVideos(options?)`
+
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `formats` | `VideoFormat[]` | `['mp4', 'webm']` | Output codecs to emit |
+| `resolutions` | `number[]` | `[1080, 720, 480]` | Target heights in px |
+| `quality` | `'web' \| 'balanced' \| 'archive'` | `'balanced'` | Preset bundle (CRF, encoder speed, poster quality, audio bitrate) |
+| `cacheDirectory` | `string` | `node_modules/.cache/enhanced-video` | Disk cache root |
+| `maxJobs` | `number` | `max(1, cpus - 1)` | Concurrent ffmpeg jobs |
+| `advanced` | `object` | `{}` | Hardware acceleration, fps cap, binary paths, per-codec overrides, lock TTL |
+
+### `advanced` highlights
+
+| Field | Purpose |
+| --- | --- |
+| `hwAccel` | `'auto'` \| `'videotoolbox'` \| `'nvenc'` \| `'vaapi'` \| `'qsv'` \| `false` — applies to **H.264 / HEVC**; VP9 and AV1 stay software |
+| `fps` | Cap output frame rate |
+| `ffmpegPath` / `ffprobePath` | Override discovery |
+| `overrides` | Per-codec / poster tweaks on top of `quality` (e.g. `h264.crf`, `av1.preset`, `poster.jpg`) |
+| `lockMaxAgeMs` | Stale lock cleanup (default 2h) |
+
+### Quick recipes
+
+```ts
+// faster iteration / CI
+enhancedVideos({ quality: 'web' });
+
+// smaller files, longer encodes
+enhancedVideos({ quality: 'archive' });
+
+// AV1 first, then VP9 WebM, then H.264 MP4
+enhancedVideos({ formats: ['av1', 'webm', 'mp4'] });
+
+// single rung on the resolution ladder
+enhancedVideos({ resolutions: [720] });
+
+// reproducible software-only encodes
+enhancedVideos({ advanced: { hwAccel: false } });
+```
+
+## Programmatic metadata
+
+Import the same pipeline without the custom element:
+
+```ts
+import meta from './clip.mp4?enhanced-video';
+// EnhancedVideoMetadata: width, height, duration, poster { jpg, webp?, avif? }, sources[]
+```
+
+Use this when you want to build your own `<video>` markup or pass data elsewhere.
+
+## Dev vs production
+
+- **Dev:** first load can kick off background encodes; the app may briefly use placeholders while middleware serves assets with **HTTP range** support. Finished jobs **invalidate** modules so HMR picks up new URLs.
+- **Build:** all variants for all discovered sources are encoded **before** the build finishes; failures fail the build.
+
+## Cache
+
+Artifacts live under **`node_modules/.cache/enhanced-video/`** (or your `cacheDirectory`), in **one subdirectory per content hash**. The hash folds in **source bytes**, **encoder args**, **resolved quality profile**, **package version**, and **ffmpeg version banner** — change any of those and you get a new folder. There is **no automatic pruning**; delete the cache directory to reclaim space.
+
+## See it running
+
+The clip below uses the real tag inside a small **`.svelte`** helper (so this MDsveX page never contains the raw substring that would trigger an early parse):
+
+<DocsVideoFeature />
+
+## Limitations
+
+- No **HLS / DASH** adaptive streaming — static `<source>` list only.
+- No **subtitle / caption** pipeline.
+- **`src`** must remain a compile-time string literal.
+
+---
+
+**Repository:** [github.com/voadk/enhanced-video-sveltekit](https://github.com/voadk/enhanced-video-sveltekit) · **License:** MIT
