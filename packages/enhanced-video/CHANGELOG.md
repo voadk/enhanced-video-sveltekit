@@ -5,6 +5,17 @@ All notable changes to `enhanced-video-sveltekit` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely,
 generated from Conventional Commit messages by [git-cliff](https://git-cliff.org/).
 
+## [0.9.1] - 2026-05-16
+
+### Bug Fixes
+
+- Fallback and probe on hwAccel settings (51d7834)
+
+### Chores
+
+- Track Coverr showcase videos for CI/docker builds (c1d6834)
+- Make demo deploy ready (19a6009)
+
 ## [0.9.0] - 2026-05-08
 
 ### Bug Fixes
@@ -13,6 +24,7 @@ generated from Conventional Commit messages by [git-cliff](https://git-cliff.org
 
 ### Features
 
+- Node engine bump (01cdacb)
 - Add quality profiles and encoder configuration (a67e87e)
 
 ## [0.8.0] - 2026-05-07
