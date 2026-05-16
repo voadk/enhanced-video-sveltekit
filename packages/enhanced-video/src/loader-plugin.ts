@@ -266,7 +266,7 @@ export function loader_plugin(options: EnhancedVideosOptions = {}): Plugin {
 				fps: fps_cap,
 				hwAccel: hw_accel,
 				profile,
-				version: 7
+				version: 8
 			};
 			const key = getCacheKey(source_bytes, args, banner);
 			const cache_dir = getCacheDir(vite_config.root, key, cache_dir_option);

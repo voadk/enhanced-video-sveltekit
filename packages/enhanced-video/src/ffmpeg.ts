@@ -111,28 +111,6 @@ function detect_encoders(): EncoderCatalog {
 	};
 }
 
-function pick_encoder(codec: 'h264' | 'hevc', hwAccel: HwAccel): EncoderEntry {
-	if (!encoder_catalog) encoder_catalog = detect_encoders();
-	const list = encoder_catalog[codec];
-	if (list.length === 0) {
-		throw new Error(`enhanced-video: no ${codec} encoder available in this ffmpeg build`);
-	}
-	if (hwAccel === false) {
-		const sw = list.find((e) => e.accel === 'sw');
-		if (!sw) throw new Error(`enhanced-video: software ${codec} encoder (libx264/libx265) not available`);
-		return sw;
-	}
-	if (hwAccel === 'auto') return list[0];
-	const match = list.find((e) => e.accel === hwAccel);
-	if (!match) {
-		const tried = list.map((e) => e.name).join(', ');
-		throw new Error(
-			`enhanced-video: requested hwAccel='${hwAccel}' but no matching encoder available. Found: ${tried}.`
-		);
-	}
-	return match;
-}
-
 let ffmpeg_banner_cache: string | null = null;
 
 export function assertFfmpeg(): string {
@@ -284,6 +262,84 @@ function push_codec_quality(
 			args.push('-qp', String(crf));
 			break;
 	}
+}
+
+/** Minimal encode for probing — must stay tiny so startup checks stay fast. */
+const ENCODER_PROBE_QUALITY = { crf: 28, preset: 'veryfast' } as const;
+
+let auto_h264_picked: EncoderEntry | null = null;
+let auto_hevc_picked: EncoderEntry | null = null;
+
+function encoder_probe_succeeds(encoder: EncoderEntry): boolean {
+	const enc_args: string[] = [];
+	push_codec_quality(enc_args, encoder, ENCODER_PROBE_QUALITY);
+	const result = spawnSync(
+		ffmpeg_bin,
+		[
+			'-hide_banner',
+			'-loglevel',
+			'error',
+			'-nostats',
+			'-y',
+			'-f',
+			'lavfi',
+			'-i',
+			'testsrc=duration=0.05:size=64x36:rate=1',
+			'-frames:v',
+			'1',
+			'-c:v',
+			encoder.name,
+			...enc_args,
+			'-f',
+			'null',
+			'-'
+		],
+		{ encoding: 'utf-8' }
+	);
+	return result.status === 0;
+}
+
+function resolve_auto_encoder(list: EncoderEntry[], codec: 'h264' | 'hevc'): EncoderEntry {
+	for (const e of list) {
+		if (e.accel === 'sw') continue;
+		if (encoder_probe_succeeds(e)) return e;
+	}
+	const sw = list.find((e) => e.accel === 'sw');
+	if (!sw) {
+		throw new Error(
+			`enhanced-video: no working ${codec} encoder (hardware unusable and software encoder missing)`
+		);
+	}
+	return sw;
+}
+
+function pick_encoder(codec: 'h264' | 'hevc', hwAccel: HwAccel): EncoderEntry {
+	if (!encoder_catalog) encoder_catalog = detect_encoders();
+	const list = encoder_catalog[codec];
+	if (list.length === 0) {
+		throw new Error(`enhanced-video: no ${codec} encoder available in this ffmpeg build`);
+	}
+	if (hwAccel === false) {
+		const sw = list.find((e) => e.accel === 'sw');
+		if (!sw) throw new Error(`enhanced-video: software ${codec} encoder (libx264/libx265) not available`);
+		return sw;
+	}
+	if (hwAccel === 'auto') {
+		if (codec === 'h264') {
+			if (!auto_h264_picked) auto_h264_picked = resolve_auto_encoder(list, 'h264');
+			return auto_h264_picked;
+		}
+		if (!auto_hevc_picked) auto_hevc_picked = resolve_auto_encoder(list, 'hevc');
+		return auto_hevc_picked;
+	}
+	const match = list.find((e) => e.accel === hwAccel);
+	if (!match) {
+		const tried = list.map((e) => e.name).join(', ');
+		throw new Error(
+			`enhanced-video: requested hwAccel='${hwAccel}' but no matching encoder available. Found: ${tried}.`
+		);
+	}
+	return match;
 }
 
 function build_vf(height: number | undefined): string | null {
