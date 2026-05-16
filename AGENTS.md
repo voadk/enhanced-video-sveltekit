@@ -167,3 +167,34 @@ Backfilling a missed Release (one-off): `git-cliff --current --strip all > /tmp/
 - Subtitle / caption tracks
 - `@sveltejs/enhanced-img` integration for responsive posters (planned)
 - First-time encode of long videos in dev can exceed Vite's hard-coded 60s SSR module-fetch timeout. Refresh after the `✓` line works (cache hit). Run `pnpm build` once to warm the cache, or use a smaller test clip.
+
+## Cursor Cloud specific instructions
+
+### System dependencies
+
+The Cloud VM already has `ffmpeg` 6.1.1 (with `libsvtav1` + `libx264`), `ffprobe`, Node.js v22, and pnpm 10.30.3 installed. No additional system packages are needed.
+
+### Running the dev server
+
+- `pnpm dev` starts the SvelteKit demo on `:5173`.
+- On first page load (cold cache), ffmpeg encodes all demo videos (AV1 webm + H.264 mp4 + poster). This takes ~60-80s for the full set of 12 demo clips. Wait for the `✓` lines in the terminal before expecting the page to fully render in a browser.
+- Subsequent loads are instant (cache hit). Cache lives at `apps/demo/node_modules/.cache/enhanced-video/`.
+- The `@hugeicons/svelte` "ignored build scripts" warning during `pnpm install` is harmless and does not affect functionality.
+
+### Key commands
+
+See the **Commands** section above. Quick reference:
+
+| Task | Command |
+|------|---------|
+| Install deps + build library | `pnpm install` |
+| Type-check all | `pnpm check` |
+| Dev server (demo) | `pnpm dev` |
+| Production build (demo) | `pnpm build` |
+| Library build only | `pnpm --filter enhanced-video-sveltekit build` |
+
+### Gotchas
+
+- The demo's `engines.node: "24"` is aspirational; it works fine on Node 22.
+- Conventional Commits are enforced by a husky hook. Use `--no-verify` only when absolutely necessary (e.g. rebasing).
+- Library `.ts` imports use `.js` extensions (`moduleResolution: NodeNext`). Do not use extensionless imports in `packages/enhanced-video/src/`.
