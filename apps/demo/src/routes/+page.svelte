@@ -20,12 +20,18 @@
 			>
 			<span>enhanced-video-sveltekit</span>
 		</div>
-		<a
-			class="font-mono text-[12.5px] text-muted-foreground hover:text-foreground"
-			href="https://github.com/voadk/enhanced-video-sveltekit"
-			target="_blank"
-			rel="noopener">GitHub ↗</a
-		>
+		<div class="flex items-center gap-4">
+			<a
+				class="font-mono text-[12.5px] text-muted-foreground hover:text-foreground"
+				href="/docs">Docs</a
+			>
+			<a
+				class="font-mono text-[12.5px] text-muted-foreground hover:text-foreground"
+				href="https://github.com/voadk/enhanced-video-sveltekit"
+				target="_blank"
+				rel="noopener">GitHub ↗</a
+			>
+		</div>
 	</header>
 
 	<section class="pt-[88px] pb-16 max-[720px]:pt-14 max-[720px]:pb-10">
